@@ -1,9 +1,13 @@
+using ProsperaAssess.Api;
+using Volo.Abp;
+using Volo.Abp.Autofac;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
 
 var builder=WebApplication.CreateBuilder(args);
 builder.WebHost.UseUrls("http://localhost:5080");
+builder.Host.UseAutofac();
 var connection=builder.Configuration.GetConnectionString("Default");
 if(string.IsNullOrWhiteSpace(connection))throw new InvalidOperationException("Configure ConnectionStrings:Default in user secrets.");
 builder.Services.AddDbContext<AssessDb>(o=>o.UseSqlServer(connection));
@@ -15,7 +19,10 @@ builder.Services.AddAuthorization(o=>{
  o.AddPolicy("Approver",p=>p.RequireRole("Principal","SchoolAdmin","AcademicAdmin"));
 });
 builder.Services.AddCors(o=>o.AddPolicy("dev",p=>p.WithOrigins("http://localhost:5173").AllowAnyHeader().AllowAnyMethod()));
-var app=builder.Build();app.UseCors("dev");app.UseAuthentication();app.UseAuthorization();
+await builder.AddApplicationAsync<ProsperaAssessModule>();
+var app=builder.Build();
+await app.InitializeApplicationAsync();
+app.UseCors("dev");app.UseAuthentication();app.UseAuthorization();
 using(var scope=app.Services.CreateScope()){
  var db=scope.ServiceProvider.GetRequiredService<AssessDb>();
  await db.Database.EnsureCreatedAsync(); // Development only: replace with migrations before deployments.
