@@ -1,23 +1,25 @@
-# School assessment extension — v0.2
+# Grades 8–12 school support — implementation update
 
-Prospera Assess remains one digital marking and moderation platform for schools, colleges and training providers.
+The shared Prospera Assess product can now represent private/independent and public high-school assessments.
 
-## Implemented in prototype
+## Current development prototype
+- Assessment metadata: school type, IEB / DBE-NSC / Other pathway, grade 8–12, school term 1–4, subject, assessment type and optional assessment weighting (0–100%).
+- Rubric-based human marking, basic moderation and approval remain available for those assessments.
+- Simple moderation separation rule: entered moderator name cannot equal the last entered marker name.
+- School summary API: `GET /api/schools/summary` gives assessment/submission/moderation counts and average approved percentage.
+- Both assessments and grades remain in process memory and reset on restart.
 
-- Optional school-specific assessment context on an assessment: subject, grade (1–12), term (1–4), assessment type.
-- Input validation on grade/term and mandatory school metadata.
-- `GET /api/schools/grades` and `GET /api/schools/assessments` for school-oriented clients.
-- Existing rubric, submission, manual marking, moderation and approval flow works for school assessments.
-- React School assessments workspace for setup and navigation.
+## Critical limitations
+- The weight field is **metadata only**. No official IEB/DBE CAPS SBA or promotion formula is implemented or certified.
+- Marker/moderator names are self-entered; identity and roles are not authenticated. This is **not a security boundary**.
+- There is no authorised school tenant separation, child-data privacy system, SQL persistence, official report card generation or document scanning.
+- A trained proprietary Prospera AI marking model does not yet exist.
+- Use fictional development data only. Do not deploy this API publicly.
 
-## Not implemented (next milestones)
-
-1. Identity/permissions: distinguish Teacher, HOD, Principal, district moderator, learners, and enforce role separation on backend (current actor fields are arbitrary text).
-2. SQL Server and school/institution tenancy; data is currently in memory and resets at application restart.
-3. Configurable official subject taxonomy, institution-specific CAPS/SBA weighting and school moderation rules, reviewed against current DBE requirements.
-4. Supporting file upload, validated documents and original-script storage.
-5. Moderation sampling workflow, independent moderation report and authorised mark release; existing moderation is basic approve/return only.
-6. Separate learner identifiers and privacy controls suitable for children, plus POPIA safeguards.
-7. Subject-specific AI training, evaluation and approval; no AI marking model has been trained.
-
-**Do not deploy the demonstration API to production or use real school learner data.**
+## Required next release
+1. Add ABP authentication, institution isolation and school roles (Teacher, HOD, Principal, School Admin).
+2. Use SQL Server persistence and migrations with durable marking histories.
+3. Define formally reviewed IEB/DBE institution-specific SBA schemes; calculate only validated weighting structures.
+4. Implement detailed moderation sampling, evidence, approvals and revision history.
+5. Implement document upload/storage and student privacy/security controls.
+6. Build and separately validate the Python/PyTorch marking model.
