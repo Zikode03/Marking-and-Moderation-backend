@@ -18,10 +18,13 @@ submissions[demo.Id]=demo;
 
 app.MapGet("/api/health", () => Results.Ok(new { status="ok", service="Prospera Assess API", persistence="in-memory-demo", ai="not-trained" }));
 app.MapGet("/api/assessments", () => Results.Ok(assessments.Values.OrderBy(x=>x.Title)));
+app.MapGet("/api/schools/grades", () => Results.Ok(Enumerable.Range(1,12)));
+app.MapGet("/api/schools/assessments", () => Results.Ok(assessments.Values.Where(a=>a.School is not null).OrderBy(a=>a.School!.Grade).ThenBy(a=>a.School!.Subject)));
 app.MapGet("/api/assessments/{id:guid}", (Guid id) => assessments.TryGetValue(id,out var a)?Results.Ok(a):Results.NotFound());
 app.MapPost("/api/assessments", (CreateAssessment req) => {
+ if(req.School is not null && (req.School.Grade<1||req.School.Grade>12||req.School.Term<1||req.School.Term>4||string.IsNullOrWhiteSpace(req.School.Subject)||string.IsNullOrWhiteSpace(req.School.AssessmentType))) return Results.BadRequest(new {error="School assessments require a subject, assessment type, grade 1–12 and term 1–4."});
  if(string.IsNullOrWhiteSpace(req.Title)||string.IsNullOrWhiteSpace(req.Code)||req.Criteria is null||req.Criteria.Count==0||req.Criteria.Any(c=>c.MaxMarks<=0))return Results.BadRequest(new {error="Provide title, code and positive rubric criteria."});
- var a=new Assessment(Guid.NewGuid(),req.Title.Trim(),req.Code.Trim(),req.Criteria.Sum(c=>c.MaxMarks),req.Criteria.Select(c=>new Criterion(Guid.NewGuid(),c.Name,c.MaxMarks)).ToList());
+ var a=new Assessment(Guid.NewGuid(),req.Title.Trim(),req.Code.Trim(),req.Criteria.Sum(c=>c.MaxMarks),req.Criteria.Select(c=>new Criterion(Guid.NewGuid(),c.Name,c.MaxMarks)).ToList(),req.School);
  assessments[a.Id]=a;return Results.Created($"/api/assessments/{a.Id}",a);
 });
 app.MapGet("/api/submissions", (Guid? assessmentId) => Results.Ok(submissions.Values.Where(s=>assessmentId is null||s.AssessmentId==assessmentId).OrderBy(s=>s.StudentReference)));
@@ -62,7 +65,8 @@ app.MapPost("/api/submissions/{id:guid}/ai-suggestion",(Guid id)=>{
 app.Run();
 
 record Criterion(Guid Id,string Name,decimal MaxMarks);
-record Assessment(Guid Id,string Title,string Code,decimal TotalMarks,List<Criterion> Criteria);
+record SchoolContext(string Subject,int Grade,int Term,string AssessmentType);
+record Assessment(Guid Id,string Title,string Code,decimal TotalMarks,List<Criterion> Criteria,SchoolContext? School=null);
 enum WorkflowStatus { Submitted,Marked,Moderated,Approved }
 class Submission(Guid id,Guid assessmentId,string studentReference,string answerText,WorkflowStatus status,Dictionary<Guid,decimal> marks,string? feedback,List<AuditEntry> audit) {
  public Guid Id {get;}=id; public Guid AssessmentId {get;}=assessmentId;
@@ -73,7 +77,7 @@ class Submission(Guid id,Guid assessmentId,string studentReference,string answer
 }
 record AuditEntry(DateTimeOffset At,string Actor,string Action,string Notes);
 record CriterionInput(string Name,decimal MaxMarks);
-record CreateAssessment(string Title,string Code,List<CriterionInput> Criteria);
+record CreateAssessment(string Title,string Code,List<CriterionInput> Criteria,SchoolContext? School=null);
 record CreateSubmission(Guid AssessmentId,string StudentReference,string AnswerText);
 record MarkRequest(string Marker,Dictionary<Guid,decimal> Marks,string? Feedback);
 record ModerationRequest(string Moderator,bool Approve,string Comments);
