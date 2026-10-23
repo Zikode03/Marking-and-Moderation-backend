@@ -43,6 +43,16 @@ app.MapPost("/login",async(LoginRequest req,SignInManager<AppUser> signIn,UserMa
  await signIn.SignInAsync(user,isPersistent:false);
  return Results.Empty;
 });
+app.MapPost("/api/bootstrap/staff",async(CreateStaffRequest req,ClaimsPrincipal p,UserManager<AppUser> um)=>{
+ var current=await um.GetUserAsync(p);if(current is null)return Results.Unauthorized();
+ if(!await um.IsInRoleAsync(current,"SchoolAdmin"))return Results.Forbid();
+ if(!new[]{"Teacher","HOD","Principal","AcademicAdmin"}.Contains(req.Role)||string.IsNullOrWhiteSpace(req.Email)||string.IsNullOrWhiteSpace(req.Password))return Results.BadRequest(new {error="Valid email, password and school role are required."});
+ if(await um.FindByEmailAsync(req.Email)!=null)return Results.Conflict(new {error="Account already exists."});
+ var user=new AppUser{UserName=req.Email,Email=req.Email,EmailConfirmed=true,SchoolId=current.SchoolId};
+ var created=await um.CreateAsync(user,req.Password);if(!created.Succeeded)return Results.BadRequest(new {errors=created.Errors.Select(x=>x.Description)});
+ var assigned=await um.AddToRoleAsync(user,req.Role);if(!assigned.Succeeded)return Results.BadRequest(new {errors=assigned.Errors.Select(x=>x.Description)});
+ return Results.Created("/api/me",new {user.Email,user.SchoolId,req.Role});
+}).RequireAuthorization();
 app.MapGet("/api/health",()=>Results.Ok(new {status="ok",persistence="sql-server",ai="not-trained"}));
 var api=app.MapGroup("/api").RequireAuthorization();
 api.MapGet("/me",async(ClaimsPrincipal p,UserManager<AppUser> um)=>{
@@ -104,3 +114,4 @@ api.MapPost("/submissions/{id:guid}/approve",async(Guid id,AssessDb db,ClaimsPri
 api.MapPost("/submissions/{id:guid}/ai-suggestion",()=>Results.Problem("No validated proprietary AI model is deployed.",statusCode:503));
 app.Run();
 record LoginRequest(string Email,string Password);
+record CreateStaffRequest(string Email,string Password,string Role);
