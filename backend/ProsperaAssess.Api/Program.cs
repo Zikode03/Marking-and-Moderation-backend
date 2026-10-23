@@ -1,94 +1,106 @@
-using System.Collections.Concurrent;
-using System.Text.Json.Serialization;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore;
+using System.Security.Claims;
 
-var builder = WebApplication.CreateBuilder(args);
+var builder=WebApplication.CreateBuilder(args);
 builder.WebHost.UseUrls("http://localhost:5080");
-builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
-builder.Services.AddCors(o => o.AddPolicy("dev", p => p.WithOrigins("http://localhost:5173").AllowAnyHeader().AllowAnyMethod()));
-var app = builder.Build();
-app.UseCors("dev");
-
-var assessments = new ConcurrentDictionary<Guid, Assessment>();
-var submissions = new ConcurrentDictionary<Guid, Submission>();
-var sample = new Assessment(Guid.NewGuid(),"Business Management — Formative Assessment","BMAN101",50,
-  [new Criterion(Guid.NewGuid(),"Conceptual understanding",20),new Criterion(Guid.NewGuid(),"Practical application",20),new Criterion(Guid.NewGuid(),"Structure and clarity",10)]);
-assessments[sample.Id]=sample;
-var demo = new Submission(Guid.NewGuid(),sample.Id,"STU-001","A sample submission for demonstration only.",WorkflowStatus.Submitted,new Dictionary<Guid,decimal>(),null,new List<AuditEntry>());
-submissions[demo.Id]=demo;
-
-app.MapGet("/api/health", () => Results.Ok(new { status="ok", service="Prospera Assess API", persistence="in-memory-demo", ai="not-trained" }));
-app.MapGet("/api/assessments", () => Results.Ok(assessments.Values.OrderBy(x=>x.Title)));
-app.MapGet("/api/schools/grades", () => Results.Ok(Enumerable.Range(8,5)));
-app.MapGet("/api/schools/assessments", () => Results.Ok(assessments.Values.Where(a=>a.School is not null).OrderBy(a=>a.School!.Grade).ThenBy(a=>a.School!.Subject)));
-app.MapGet("/api/schools/summary", () => Results.Ok(assessments.Values.Where(a => a.School is not null).Select(a => new {
- a.Id, a.Title, a.Code, a.School,
- SubmissionCount=submissions.Values.Count(s=>s.AssessmentId==a.Id),
- MarkedCount=submissions.Values.Count(s=>s.AssessmentId==a.Id && s.Status!=WorkflowStatus.Submitted),
- ModeratedCount=submissions.Values.Count(s=>s.AssessmentId==a.Id && (s.Status==WorkflowStatus.Moderated||s.Status==WorkflowStatus.Approved)),
- ApprovedCount=submissions.Values.Count(s=>s.AssessmentId==a.Id && s.Status==WorkflowStatus.Approved),
- AverageApprovedPercent=submissions.Values.Where(s=>s.AssessmentId==a.Id && s.Status==WorkflowStatus.Approved).Select(s=>a.TotalMarks>0?s.Total/a.TotalMarks*100:0).DefaultIfEmpty(0).Average()
-})));
-app.MapGet("/api/assessments/{id:guid}", (Guid id) => assessments.TryGetValue(id,out var a)?Results.Ok(a):Results.NotFound());
-app.MapPost("/api/assessments", (CreateAssessment req) => {
- if(req.School is not null && (req.School.Grade<8||req.School.Grade>12||req.School.Term<1||req.School.Term>4||string.IsNullOrWhiteSpace(req.School.Subject)||string.IsNullOrWhiteSpace(req.School.AssessmentType)||req.School.WeightPercent<0||req.School.WeightPercent>100||!new[]{"IEB","DBE-NSC","Other"}.Contains(req.School.Pathway)||!new[]{"Independent","Public"}.Contains(req.School.SchoolType))) return Results.BadRequest(new {error="School assessments require a subject, assessment type, grade 8–12 and term 1–4."});
- if(string.IsNullOrWhiteSpace(req.Title)||string.IsNullOrWhiteSpace(req.Code)||req.Criteria is null||req.Criteria.Count==0||req.Criteria.Any(c=>c.MaxMarks<=0))return Results.BadRequest(new {error="Provide title, code and positive rubric criteria."});
- var a=new Assessment(Guid.NewGuid(),req.Title.Trim(),req.Code.Trim(),req.Criteria.Sum(c=>c.MaxMarks),req.Criteria.Select(c=>new Criterion(Guid.NewGuid(),c.Name,c.MaxMarks)).ToList(),req.School);
- assessments[a.Id]=a;return Results.Created($"/api/assessments/{a.Id}",a);
+var connection=builder.Configuration.GetConnectionString("Default");
+if(string.IsNullOrWhiteSpace(connection))throw new InvalidOperationException("Configure ConnectionStrings:Default in user secrets.");
+builder.Services.AddDbContext<AssessDb>(o=>o.UseSqlServer(connection));
+builder.Services.AddIdentityApiEndpoints<AppUser>().AddRoles<IdentityRole>().AddEntityFrameworkStores<AssessDb>();
+builder.Services.AddAuthorization(o=>{
+ o.AddPolicy("Staff",p=>p.RequireRole("SchoolAdmin","Teacher","HOD","Principal","AcademicAdmin"));
+ o.AddPolicy("Marker",p=>p.RequireRole("Teacher","AcademicAdmin"));
+ o.AddPolicy("Moderator",p=>p.RequireRole("HOD","AcademicAdmin"));
+ o.AddPolicy("Approver",p=>p.RequireRole("Principal","SchoolAdmin","AcademicAdmin"));
 });
-app.MapGet("/api/submissions", (Guid? assessmentId) => Results.Ok(submissions.Values.Where(s=>assessmentId is null||s.AssessmentId==assessmentId).OrderBy(s=>s.StudentReference)));
-app.MapPost("/api/submissions", (CreateSubmission req) => {
- if(!assessments.ContainsKey(req.AssessmentId))return Results.BadRequest(new {error="Assessment does not exist."});
- if(string.IsNullOrWhiteSpace(req.StudentReference)||string.IsNullOrWhiteSpace(req.AnswerText))return Results.BadRequest(new {error="Student reference and answer required."});
- var s=new Submission(Guid.NewGuid(),req.AssessmentId,req.StudentReference,req.AnswerText,WorkflowStatus.Submitted,new Dictionary<Guid,decimal>(),null,new List<AuditEntry>());
- submissions[s.Id]=s;return Results.Created($"/api/submissions/{s.Id}",s);
-});
-app.MapGet("/api/submissions/{id:guid}",(Guid id)=>submissions.TryGetValue(id,out var s)?Results.Ok(s):Results.NotFound());
-app.MapPost("/api/submissions/{id:guid}/mark",(Guid id,MarkRequest req)=>{
- if(!submissions.TryGetValue(id,out var s)||!assessments.TryGetValue(s.AssessmentId,out var a))return Results.NotFound();
- if(s.Status is WorkflowStatus.Approved)return Results.Conflict(new {error="Approved marks cannot be changed."});
- if(string.IsNullOrWhiteSpace(req.Marker)||req.Marks is null ||req.Marks.Count!=a.Criteria.Count)return Results.BadRequest(new {error="Marker and a mark for every rubric criterion are required."});
- if(a.Criteria.Any(c=>!req.Marks.TryGetValue(c.Id,out var mark)||mark<0||mark>c.MaxMarks))return Results.BadRequest(new {error="Each rubric mark must be within its maximum."});
- s.Marks=new Dictionary<Guid,decimal>(req.Marks);s.LastMarker=req.Marker.Trim();s.Status=WorkflowStatus.Marked;s.Audit.Add(new AuditEntry(DateTimeOffset.UtcNow,req.Marker,"Marked",req.Feedback??""));
- s.Feedback=req.Feedback;return Results.Ok(s);
-});
-app.MapPost("/api/submissions/{id:guid}/moderate",(Guid id,ModerationRequest req)=>{
- if(!submissions.TryGetValue(id,out var s))return Results.NotFound();
- if(s.Status!=WorkflowStatus.Marked)return Results.Conflict(new {error="Submission must be marked before moderation."});
- if(string.IsNullOrWhiteSpace(req.Moderator)||string.IsNullOrWhiteSpace(req.Comments))return Results.BadRequest(new {error="Moderator and comments required."});
- if(string.Equals(req.Moderator.Trim(),s.LastMarker,StringComparison.OrdinalIgnoreCase))return Results.BadRequest(new {error="Marker and moderator must be different reviewers."});
- s.Status=req.Approve?WorkflowStatus.Moderated:WorkflowStatus.Submitted;
- s.Audit.Add(new AuditEntry(DateTimeOffset.UtcNow,req.Moderator,req.Approve?"Moderated":"Returned for remarking",req.Comments));
- return Results.Ok(s);
-});
-app.MapPost("/api/submissions/{id:guid}/approve",(Guid id,ApprovalRequest req)=>{
- if(!submissions.TryGetValue(id,out var s))return Results.NotFound();
- if(s.Status!=WorkflowStatus.Moderated)return Results.Conflict(new {error="Academic approval requires moderation."});
- if(string.IsNullOrWhiteSpace(req.Approver))return Results.BadRequest(new {error="Approver required."});
- s.Status=WorkflowStatus.Approved;s.Audit.Add(new AuditEntry(DateTimeOffset.UtcNow,req.Approver,"Approved","Final result approved"));
- return Results.Ok(s);
-});
-app.MapPost("/api/submissions/{id:guid}/ai-suggestion",(Guid id)=>{
- if(!submissions.ContainsKey(id))return Results.NotFound();
- return Results.Problem("No validated Prospera-trained model has been deployed. Human marking remains available.",statusCode:503);
-});
-app.Run();
-
-record Criterion(Guid Id,string Name,decimal MaxMarks);
-record SchoolContext(string Subject,int Grade,int Term,string AssessmentType,string SchoolType="Independent",string Pathway="IEB",decimal WeightPercent=0);
-record Assessment(Guid Id,string Title,string Code,decimal TotalMarks,List<Criterion> Criteria,SchoolContext? School=null);
-enum WorkflowStatus { Submitted,Marked,Moderated,Approved }
-class Submission(Guid id,Guid assessmentId,string studentReference,string answerText,WorkflowStatus status,Dictionary<Guid,decimal> marks,string? feedback,List<AuditEntry> audit) {
- public Guid Id {get;}=id; public Guid AssessmentId {get;}=assessmentId;
- public string StudentReference {get;}=studentReference;public string AnswerText {get;}=answerText;
- public WorkflowStatus Status {get;set;}=status;public Dictionary<Guid,decimal> Marks {get;set;}=marks;
- public string? LastMarker {get;set;}
- public string? Feedback {get;set;}=feedback;public List<AuditEntry> Audit {get;}=audit;
- public decimal Total => Marks.Values.Sum();
+builder.Services.AddCors(o=>o.AddPolicy("dev",p=>p.WithOrigins("http://localhost:5173").AllowAnyHeader().AllowAnyMethod()));
+var app=builder.Build();app.UseCors("dev");app.UseAuthentication();app.UseAuthorization();
+using(var scope=app.Services.CreateScope()){
+ var db=scope.ServiceProvider.GetRequiredService<AssessDb>();
+ await db.Database.EnsureCreatedAsync(); // Development only: replace with migrations before deployments.
+ var roles=scope.ServiceProvider.GetRequiredService<RoleManager<IdentityRole>>();
+ foreach(var role in new[]{"SchoolAdmin","Teacher","HOD","Principal","AcademicAdmin"})if(!await roles.RoleExistsAsync(role))await roles.CreateAsync(new IdentityRole(role));
+ var email=app.Configuration["Bootstrap:Email"];var pass=app.Configuration["Bootstrap:Password"];var school=app.Configuration["Bootstrap:SchoolId"];
+ if(!string.IsNullOrWhiteSpace(email)&&!string.IsNullOrWhiteSpace(pass)&&Guid.TryParse(school,out var schoolId)){
+  var users=scope.ServiceProvider.GetRequiredService<UserManager<AppUser>>();
+  if(await users.FindByEmailAsync(email)==null){
+   var user=new AppUser{UserName=email,Email=email,EmailConfirmed=true,SchoolId=schoolId};
+   var created=await users.CreateAsync(user,pass);
+   if(!created.Succeeded)throw new InvalidOperationException(string.Join("; ",created.Errors.Select(e=>e.Description)));
+   await users.AddToRoleAsync(user,"SchoolAdmin");
+  }
+ }
 }
-record AuditEntry(DateTimeOffset At,string Actor,string Action,string Notes);
-record CriterionInput(string Name,decimal MaxMarks);
-record CreateAssessment(string Title,string Code,List<CriterionInput> Criteria,SchoolContext? School=null);
-record CreateSubmission(Guid AssessmentId,string StudentReference,string AnswerText);
-record MarkRequest(string Marker,Dictionary<Guid,decimal> Marks,string? Feedback);
-record ModerationRequest(string Moderator,bool Approve,string Comments);
-record ApprovalRequest(string Approver);
+// Identity maps /login and /refresh. Do not map public /register.
+app.MapPost("/login",async(LoginRequest req,SignInManager<AppUser> signIn,UserManager<AppUser> users)=>{
+ var user=await users.FindByEmailAsync(req.Email);
+ if(user is null)return Results.Unauthorized();
+ var result=await signIn.CheckPasswordSignInAsync(user,req.Password,lockoutOnFailure:true);
+ if(!result.Succeeded)return Results.Unauthorized();
+ // Identity bearer token response, not a hand-rolled JWT.
+ signIn.AuthenticationScheme=IdentityConstants.BearerScheme;
+ await signIn.SignInAsync(user,isPersistent:false);
+ return Results.Empty;
+});
+app.MapGet("/api/health",()=>Results.Ok(new {status="ok",persistence="sql-server",ai="not-trained"}));
+var api=app.MapGroup("/api").RequireAuthorization();
+api.MapGet("/me",async(ClaimsPrincipal p,UserManager<AppUser> um)=>{
+ var u=await um.GetUserAsync(p);return u is null?Results.Unauthorized():Results.Ok(new {u.Email,u.SchoolId,roles=await um.GetRolesAsync(u)});
+});
+api.MapGet("/assessments",async(AssessDb db,ClaimsPrincipal p,UserManager<AppUser> um)=>{
+ var u=await um.GetUserAsync(p);if(u is null)return Results.Unauthorized();
+ var a=await db.Assessments.AsNoTracking().Where(x=>x.SchoolId==u.SchoolId).ToListAsync();
+ return Results.Ok(a.Select(x=>x.ToView()));
+});
+api.MapGet("/schools/grades",()=>Results.Ok(Enumerable.Range(8,5)));
+api.MapGet("/schools/assessments",async(AssessDb db,ClaimsPrincipal p,UserManager<AppUser> um)=>{
+ var u=await um.GetUserAsync(p);if(u is null)return Results.Unauthorized();
+ var a=await db.Assessments.AsNoTracking().Where(x=>x.SchoolId==u.SchoolId&&x.SchoolJson!=null).ToListAsync();
+ return Results.Ok(a.Select(x=>x.ToView()));
+});
+api.MapPost("/assessments",async(CreateAssessment req,AssessDb db,ClaimsPrincipal p,UserManager<AppUser> um)=>{
+ var u=await um.GetUserAsync(p);if(u is null)return Results.Unauthorized();
+ if(string.IsNullOrWhiteSpace(req.Title)||string.IsNullOrWhiteSpace(req.Code)||req.Criteria is null||req.Criteria.Count==0||req.Criteria.Any(c=>string.IsNullOrWhiteSpace(c.Name)||c.MaxMarks<=0))return Results.BadRequest(new {error="Title, code and positive rubric criteria required."});
+ if(req.School is not null&&(req.School.Grade<8||req.School.Grade>12||req.School.Term<1||req.School.Term>4||req.School.WeightPercent<0||req.School.WeightPercent>100||string.IsNullOrWhiteSpace(req.School.Subject)||!new[]{"IEB","DBE-NSC","Other"}.Contains(req.School.Pathway)||!new[]{"Independent","Public"}.Contains(req.School.SchoolType)))return Results.BadRequest(new {error="Invalid school assessment settings."});
+ var a=new AssessmentRow{Id=Guid.NewGuid(),SchoolId=u.SchoolId,Title=req.Title.Trim(),Code=req.Code.Trim(),CriteriaJson=AppJson.Write(req.Criteria.Select(c=>new Criterion(Guid.NewGuid(),c.Name,c.MaxMarks)).ToList()),SchoolJson=req.School==null?null:AppJson.Write(req.School)};
+ db.Assessments.Add(a);await db.SaveChangesAsync();return Results.Created($"/api/assessments/{a.Id}",a.ToView());
+}).RequireAuthorization("Staff");
+api.MapGet("/submissions",async(Guid? assessmentId,AssessDb db,ClaimsPrincipal p,UserManager<AppUser> um)=>{
+ var u=await um.GetUserAsync(p);if(u is null)return Results.Unauthorized();
+ var s=await db.Submissions.AsNoTracking().Where(x=>x.SchoolId==u.SchoolId&&(assessmentId==null||x.AssessmentId==assessmentId)).ToListAsync();
+ return Results.Ok(s.Select(x=>x.ToView()));
+});
+api.MapPost("/submissions",async(CreateSubmission req,AssessDb db,ClaimsPrincipal p,UserManager<AppUser> um)=>{
+ var u=await um.GetUserAsync(p);if(u is null)return Results.Unauthorized();
+ if(!await db.Assessments.AnyAsync(a=>a.Id==req.AssessmentId&&a.SchoolId==u.SchoolId))return Results.NotFound();
+ if(string.IsNullOrWhiteSpace(req.StudentReference)||string.IsNullOrWhiteSpace(req.AnswerText))return Results.BadRequest(new {error="Student reference and answer text required."});
+ var s=new SubmissionRow{Id=Guid.NewGuid(),AssessmentId=req.AssessmentId,SchoolId=u.SchoolId,StudentReference=req.StudentReference,AnswerText=req.AnswerText};
+ db.Submissions.Add(s);await db.SaveChangesAsync();return Results.Created($"/api/submissions/{s.Id}",s.ToView());
+}).RequireAuthorization("Staff");
+api.MapPost("/submissions/{id:guid}/mark",async(Guid id,MarkRequest req,AssessDb db,ClaimsPrincipal p,UserManager<AppUser> um)=>{
+ var u=await um.GetUserAsync(p);if(u is null)return Results.Unauthorized();
+ var s=await db.Submissions.FirstOrDefaultAsync(x=>x.Id==id&&x.SchoolId==u.SchoolId);if(s is null)return Results.NotFound();
+ var a=await db.Assessments.FirstAsync(x=>x.Id==s.AssessmentId&&x.SchoolId==u.SchoolId);
+ if(s.Status=="Approved")return Results.Conflict(new {error="Finalised mark cannot be edited."});
+ var c=a.Criteria();if(req.Marks==null||req.Marks.Count!=c.Count||c.Any(x=>!req.Marks.TryGetValue(x.Id,out var m)||m<0||m>x.MaxMarks))return Results.BadRequest(new {error="All rubric marks must be valid."});
+ s.MarksJson=AppJson.Write(req.Marks);s.Feedback=req.Feedback;s.LastMarkerId=u.Id;s.Status="Marked";s.AddAudit(u.Id,"Marked",req.Feedback??"");
+ await db.SaveChangesAsync();return Results.Ok(s.ToView());
+}).RequireAuthorization("Marker");
+api.MapPost("/submissions/{id:guid}/moderate",async(Guid id,ModerationRequest req,AssessDb db,ClaimsPrincipal p,UserManager<AppUser> um)=>{
+ var u=await um.GetUserAsync(p);if(u is null)return Results.Unauthorized();
+ var s=await db.Submissions.FirstOrDefaultAsync(x=>x.Id==id&&x.SchoolId==u.SchoolId);if(s is null)return Results.NotFound();
+ if(s.Status!="Marked")return Results.Conflict(new {error="Only marked submissions can be moderated."});
+ if(s.LastMarkerId==u.Id)return Results.Conflict(new {error="Marker cannot moderate their own marking."});
+ if(string.IsNullOrWhiteSpace(req.Comments))return Results.BadRequest(new {error="Moderation comments required."});
+ s.Status=req.Approve?"Moderated":"Submitted";s.AddAudit(u.Id,req.Approve?"Moderated":"Returned",req.Comments);await db.SaveChangesAsync();return Results.Ok(s.ToView());
+}).RequireAuthorization("Moderator");
+api.MapPost("/submissions/{id:guid}/approve",async(Guid id,AssessDb db,ClaimsPrincipal p,UserManager<AppUser> um)=>{
+ var u=await um.GetUserAsync(p);if(u is null)return Results.Unauthorized();
+ var s=await db.Submissions.FirstOrDefaultAsync(x=>x.Id==id&&x.SchoolId==u.SchoolId);if(s is null)return Results.NotFound();
+ if(s.Status!="Moderated")return Results.Conflict(new {error="Moderation required before approval."});
+ s.Status="Approved";s.AddAudit(u.Id,"Approved","Approved academic result");await db.SaveChangesAsync();return Results.Ok(s.ToView());
+}).RequireAuthorization("Approver");
+api.MapPost("/submissions/{id:guid}/ai-suggestion",()=>Results.Problem("No validated proprietary AI model is deployed.",statusCode:503));
+app.Run();
+record LoginRequest(string Email,string Password);
