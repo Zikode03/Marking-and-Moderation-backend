@@ -1,0 +1,14 @@
+**/bin/
+**/obj/
+**/__pycache__/
+**/.pytest_cache/
+.env
+.env.*
+!.env.example
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.db
+training-data/
+datasets/
