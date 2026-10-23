@@ -20,9 +20,17 @@ app.MapGet("/api/health", () => Results.Ok(new { status="ok", service="Prospera 
 app.MapGet("/api/assessments", () => Results.Ok(assessments.Values.OrderBy(x=>x.Title)));
 app.MapGet("/api/schools/grades", () => Results.Ok(Enumerable.Range(8,5)));
 app.MapGet("/api/schools/assessments", () => Results.Ok(assessments.Values.Where(a=>a.School is not null).OrderBy(a=>a.School!.Grade).ThenBy(a=>a.School!.Subject)));
+app.MapGet("/api/schools/summary", () => Results.Ok(assessments.Values.Where(a => a.School is not null).Select(a => new {
+ a.Id, a.Title, a.Code, a.School,
+ SubmissionCount=submissions.Values.Count(s=>s.AssessmentId==a.Id),
+ MarkedCount=submissions.Values.Count(s=>s.AssessmentId==a.Id && s.Status!=WorkflowStatus.Submitted),
+ ModeratedCount=submissions.Values.Count(s=>s.AssessmentId==a.Id && (s.Status==WorkflowStatus.Moderated||s.Status==WorkflowStatus.Approved)),
+ ApprovedCount=submissions.Values.Count(s=>s.AssessmentId==a.Id && s.Status==WorkflowStatus.Approved),
+ AverageApprovedPercent=submissions.Values.Where(s=>s.AssessmentId==a.Id && s.Status==WorkflowStatus.Approved).Select(s=>a.TotalMarks>0?s.Total/a.TotalMarks*100:0).DefaultIfEmpty(0).Average()
+})));
 app.MapGet("/api/assessments/{id:guid}", (Guid id) => assessments.TryGetValue(id,out var a)?Results.Ok(a):Results.NotFound());
 app.MapPost("/api/assessments", (CreateAssessment req) => {
- if(req.School is not null && (req.School.Grade<8||req.School.Grade>12||req.School.Term<1||req.School.Term>4||string.IsNullOrWhiteSpace(req.School.Subject)||string.IsNullOrWhiteSpace(req.School.AssessmentType)||!new[]{"IEB","DBE-NSC","Other"}.Contains(req.School.Pathway)||!new[]{"Independent","Public"}.Contains(req.School.SchoolType))) return Results.BadRequest(new {error="School assessments require a subject, assessment type, grade 8–12 and term 1–4."});
+ if(req.School is not null && (req.School.Grade<8||req.School.Grade>12||req.School.Term<1||req.School.Term>4||string.IsNullOrWhiteSpace(req.School.Subject)||string.IsNullOrWhiteSpace(req.School.AssessmentType)||req.School.WeightPercent<0||req.School.WeightPercent>100||!new[]{"IEB","DBE-NSC","Other"}.Contains(req.School.Pathway)||!new[]{"Independent","Public"}.Contains(req.School.SchoolType))) return Results.BadRequest(new {error="School assessments require a subject, assessment type, grade 8–12 and term 1–4."});
  if(string.IsNullOrWhiteSpace(req.Title)||string.IsNullOrWhiteSpace(req.Code)||req.Criteria is null||req.Criteria.Count==0||req.Criteria.Any(c=>c.MaxMarks<=0))return Results.BadRequest(new {error="Provide title, code and positive rubric criteria."});
  var a=new Assessment(Guid.NewGuid(),req.Title.Trim(),req.Code.Trim(),req.Criteria.Sum(c=>c.MaxMarks),req.Criteria.Select(c=>new Criterion(Guid.NewGuid(),c.Name,c.MaxMarks)).ToList(),req.School);
  assessments[a.Id]=a;return Results.Created($"/api/assessments/{a.Id}",a);
@@ -40,13 +48,14 @@ app.MapPost("/api/submissions/{id:guid}/mark",(Guid id,MarkRequest req)=>{
  if(s.Status is WorkflowStatus.Approved)return Results.Conflict(new {error="Approved marks cannot be changed."});
  if(string.IsNullOrWhiteSpace(req.Marker)||req.Marks is null ||req.Marks.Count!=a.Criteria.Count)return Results.BadRequest(new {error="Marker and a mark for every rubric criterion are required."});
  if(a.Criteria.Any(c=>!req.Marks.TryGetValue(c.Id,out var mark)||mark<0||mark>c.MaxMarks))return Results.BadRequest(new {error="Each rubric mark must be within its maximum."});
- s.Marks=new Dictionary<Guid,decimal>(req.Marks);s.Status=WorkflowStatus.Marked;s.Audit.Add(new AuditEntry(DateTimeOffset.UtcNow,req.Marker,"Marked",req.Feedback??""));
+ s.Marks=new Dictionary<Guid,decimal>(req.Marks);s.LastMarker=req.Marker.Trim();s.Status=WorkflowStatus.Marked;s.Audit.Add(new AuditEntry(DateTimeOffset.UtcNow,req.Marker,"Marked",req.Feedback??""));
  s.Feedback=req.Feedback;return Results.Ok(s);
 });
 app.MapPost("/api/submissions/{id:guid}/moderate",(Guid id,ModerationRequest req)=>{
  if(!submissions.TryGetValue(id,out var s))return Results.NotFound();
  if(s.Status!=WorkflowStatus.Marked)return Results.Conflict(new {error="Submission must be marked before moderation."});
  if(string.IsNullOrWhiteSpace(req.Moderator)||string.IsNullOrWhiteSpace(req.Comments))return Results.BadRequest(new {error="Moderator and comments required."});
+ if(string.Equals(req.Moderator.Trim(),s.LastMarker,StringComparison.OrdinalIgnoreCase))return Results.BadRequest(new {error="Marker and moderator must be different reviewers."});
  s.Status=req.Approve?WorkflowStatus.Moderated:WorkflowStatus.Submitted;
  s.Audit.Add(new AuditEntry(DateTimeOffset.UtcNow,req.Moderator,req.Approve?"Moderated":"Returned for remarking",req.Comments));
  return Results.Ok(s);
@@ -65,13 +74,14 @@ app.MapPost("/api/submissions/{id:guid}/ai-suggestion",(Guid id)=>{
 app.Run();
 
 record Criterion(Guid Id,string Name,decimal MaxMarks);
-record SchoolContext(string Subject,int Grade,int Term,string AssessmentType,string SchoolType="Independent",string Pathway="IEB");
+record SchoolContext(string Subject,int Grade,int Term,string AssessmentType,string SchoolType="Independent",string Pathway="IEB",decimal WeightPercent=0);
 record Assessment(Guid Id,string Title,string Code,decimal TotalMarks,List<Criterion> Criteria,SchoolContext? School=null);
 enum WorkflowStatus { Submitted,Marked,Moderated,Approved }
 class Submission(Guid id,Guid assessmentId,string studentReference,string answerText,WorkflowStatus status,Dictionary<Guid,decimal> marks,string? feedback,List<AuditEntry> audit) {
  public Guid Id {get;}=id; public Guid AssessmentId {get;}=assessmentId;
  public string StudentReference {get;}=studentReference;public string AnswerText {get;}=answerText;
  public WorkflowStatus Status {get;set;}=status;public Dictionary<Guid,decimal> Marks {get;set;}=marks;
+ public string? LastMarker {get;set;}
  public string? Feedback {get;set;}=feedback;public List<AuditEntry> Audit {get;}=audit;
  public decimal Total => Marks.Values.Sum();
 }
