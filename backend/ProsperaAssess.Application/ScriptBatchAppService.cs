@@ -94,7 +94,11 @@ public class ScriptBatchAppService : ProsperaAppService, IScriptBatchAppService
         foreach (var q in result.Questions)
             if (!review.Marks.TryGetValue(q.Number, out var mark) || mark < 0 || mark > q.MaxMarks)
                 return Results.BadRequest(new { error = "Each confirmed mark must be within the approved memorandum limits." });
-        script.ConfirmTeacherReview(user.Id, review.Marks, review.Reason!.Trim());
+        if (review.Feedback is { } feedback && (feedback.Count != result.Questions.Count || result.Questions.Any(q => !feedback.TryGetValue(q.Number, out var text) || text is null || text.Length > 5000)))
+            return Results.BadRequest(new { error = "Provide learner feedback for every question, limited to 5000 characters each." });
+        if (review.Summary is not null && !InputRules.Text(review.Summary, 10000))
+            return Results.BadRequest(new { error = "Overall learner feedback must be non-empty and at most 10000 characters." });
+        script.ConfirmTeacherReview(user.Id, review.Marks, review.Reason!.Trim(), review.Feedback, review.Summary);
         await AiScriptsRepository.UpdateAsync(script);
         await UnitOfWorkManager.Current!.SaveChangesAsync();
         return Results.Ok(script.View());

@@ -20,6 +20,17 @@ public class AiReviewWorkflowTests
     }
 
     [Fact]
+    public void CorrectedFeedbackIsSavedAndOriginalIsKeptInAudit()
+    {
+        var script = PendingScript();
+        var marks = new Dictionary<string, decimal> { ["1"] = 7m };
+        Assert.Throws<BusinessException>(() => script.ConfirmTeacherReview("teacher", marks, "Checked", new() { ["other"] = "Invalid question" }));
+        script.ConfirmTeacherReview("teacher", marks, "Corrected explanation", new() { ["1"] = "Show each calculation." });
+        Assert.Equal("Show each calculation.", script.Result()!.Questions[0].Feedback);
+        Assert.Contains("Explain the missing steps", script.AuditJson);
+    }
+
+    [Fact]
     public void AiResultRequiresTeacherReviewThenIndependentHodModerationAndApproval()
     {
         var script = PendingScript();

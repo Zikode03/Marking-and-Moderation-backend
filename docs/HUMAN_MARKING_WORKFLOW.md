@@ -16,6 +16,8 @@
 - `POST /api/ai/batches/{batchId}/scripts/{scriptId}/return` — moderator returns to teacher with reason (ABP Moderate permission).
 - `POST /api/ai/batches/{batchId}/scripts/{scriptId}/approve` — final approval (ABP Approve permission).
 
+Teacher review may include a `feedback` dictionary keyed by question number. When supplied, it must include every question, with at most 5000 characters per answer. Corrections become the current learner feedback; the audit retains the preceding AI result. Older clients that omit feedback keep the existing feedback.
+
 Each POST uses the script's optimistic-concurrency revision and existing `AiReview` contract (reason plus confirmed marks for review/moderation). Server-side identity, academic allocations and separation-of-duty checks apply. The audit records capture the preceding score snapshot.
 
 ## Status mapping
