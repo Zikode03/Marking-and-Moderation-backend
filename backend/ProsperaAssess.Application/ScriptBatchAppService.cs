@@ -78,6 +78,26 @@ public class ScriptBatchAppService : ProsperaAppService, IScriptBatchAppService
         return script is null ? Results.NotFound() : Results.File(script.Content, script.ContentType, script.FileName);
 
     }
+    [Microsoft.AspNetCore.Authorization.Authorize(ProsperaPermissions.Mark)]
+    [Volo.Abp.Uow.UnitOfWork(true)]
+    public virtual async Task<OperationResult> ReviewAsync(Guid id, Guid scriptId, AiReview review)
+    {
+        var p = Principal;
+        if (await Batch(id, p, users, access) is null) return Results.NotFound();
+        var script = await AsyncExecuter.FirstOrDefaultAsync((await AiScriptsRepository.GetQueryableAsync()), s => s.Id == scriptId && s.BatchId == id);
+        if (script is null) return Results.NotFound();
+        if (script.Revision != review.Revision) return Conflict();
+        if (script.Status is not ("AwaitingModeration" or "NeedsAttention" or "ReturnedToTeacher") || script.Result() is not { } result) return Conflict();
+        if (!InputRules.Text(review.Reason, 5000) || review.Marks is null || review.Marks.Count != result.Questions.Count)
+            return Results.BadRequest(new { error = "The teacher must verify every AI mark and provide review notes." });
+        foreach (var q in result.Questions)
+            if (!review.Marks.TryGetValue(q.Number, out var mark) || mark < 0 || mark > q.MaxMarks)
+                return Results.BadRequest(new { error = "Each confirmed mark must be within the approved memorandum limits." });
+        script.ConfirmTeacherReview(p.Identity?.Name ?? "teacher", review.Marks, review.Reason!.Trim());
+        await AiScriptsRepository.UpdateAsync(script);
+        await UnitOfWorkManager.Current!.SaveChangesAsync();
+        return Results.Ok(script.View());
+    }
     [Microsoft.AspNetCore.Authorization.Authorize(ProsperaPermissions.Moderate)]
     [Volo.Abp.Uow.UnitOfWork(true)]
     public virtual async Task<OperationResult> ModerateAsync(Guid id, Guid scriptId, AiReview review)
@@ -88,7 +108,7 @@ public class ScriptBatchAppService : ProsperaAppService, IScriptBatchAppService
         var script = await AsyncExecuter.FirstOrDefaultAsync((await AiScriptsRepository.GetQueryableAsync()), s => s.Id == scriptId && s.BatchId == id);
         if (script is null) return Results.NotFound();
         if (script.Revision != review.Revision) return Conflict();
-        if (script.Status is not ("AwaitingModeration" or "NeedsAttention") || script.Result() is not { } result) return Conflict();
+        if (script.Status != "TeacherReviewed" || script.Result() is not { } result) return Conflict();
         if (!InputRules.Text(review.Reason, 5000) || review.Marks is null || review.Marks.Count != result.Questions.Count) return Results.BadRequest(new { error = "Confirm every question and give a moderation reason." });
         foreach (var q in result.Questions) if (!review.Marks.TryGetValue(q.Number, out var mark) || mark < 0 || mark > q.MaxMarks) return Results.BadRequest(new { error = "Marks must be within the memorandum question limits." });
 
