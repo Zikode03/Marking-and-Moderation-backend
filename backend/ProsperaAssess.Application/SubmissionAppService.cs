@@ -70,8 +70,8 @@ public class SubmissionAppService : ProsperaAppService, ISubmissionAppService
         var parent = await AsyncExecuter.FirstAsync((await AssessmentsRepository.GetQueryableAsync()), a => a.Id == submission.AssessmentId && a.SchoolId == user.SchoolId);
         if (!await access.CanAccess(user, principal, parent)) return Results.NotFound();
         if (request.Revision is { } revision && revision != submission.Revision()) return Conflict();
-        if (submission.Status is not ("Submitted" or "Marked"))
-            return Results.Conflict(new { error = "Only submitted or marked work can be marked. Moderated and approved results are locked." });
+        if (submission.Status is not ("Submitted" or "Marked" or "ReturnedForRemarking"))
+            return Results.Conflict(new { error = "Only submitted, returned-for-remarking or marked work can be marked. Moderated and approved results are locked." });
         var assessment = await AsyncExecuter.FirstAsync((await AssessmentsRepository.GetQueryableAsync()), a => a.Id == submission.AssessmentId && a.SchoolId == user.SchoolId);
         var criteria = assessment.Criteria();
         if (request.Marks is null || request.Marks.Count != criteria.Count ||
