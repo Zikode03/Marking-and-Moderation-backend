@@ -66,6 +66,11 @@ public partial class AiScript
         ResultJson = AppJson.Write(result with { NeedsAttention = false, Questions = result.Questions.Select(q => q with { Marks = marks[q.Number], NeedsReview = false }).ToList() });
         Status = "Moderated"; Audit(actor, "Moderated", reason);
     }
+    public void ReturnToTeacher(string actor, string reason)
+    {
+        if (Status != "TeacherReviewed" || string.IsNullOrWhiteSpace(reason)) throw new BusinessException(WorkflowErrors.Locked);
+        Status = "ReturnedToTeacher"; Audit(actor, "ReturnedToTeacher", reason);
+    }
     public void Approve(string actor)
     {
         if (Status != "Moderated") throw new BusinessException(WorkflowErrors.Locked);
