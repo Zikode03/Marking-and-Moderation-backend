@@ -10,6 +10,7 @@ public interface IScriptBatchAppService : IApplicationService
     Task<OperationResult> StartMarkingAsync(Guid id, CancellationToken ct);
     Task<OperationResult> DownloadFileAsync(Guid id, string file);
     Task<OperationResult> ReviewAsync(Guid id, Guid scriptId, AiReview review);
+    Task<OperationResult> ReturnToTeacherAsync(Guid id, Guid scriptId, AiReview review);
     Task<OperationResult> ModerateAsync(Guid id, Guid scriptId, AiReview review);
     Task<OperationResult> ApproveAsync(Guid id, Guid scriptId, AiReview review);
     Task<OperationResult> UploadAsync(UploadBatchDto request, CancellationToken ct);
