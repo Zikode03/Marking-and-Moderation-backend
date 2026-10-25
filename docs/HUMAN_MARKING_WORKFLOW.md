@@ -1,29 +1,35 @@
-# Human marking workflow — correction 25 October 2026
+# Academic marking and moderation — AI-first workflow
 
-## Current legacy text-submission workflow
+## Intended current product process
 
-Submitted → Marked → Moderated → Approved
+1. **Upload:** authorised teaching staff upload an existing question paper, approved memorandum and complete learner scripts.
+2. **AI marking:** once an independently approved local model is connected, processing produces provisional question-level scores, evidence, highlights and suggestions for improvement.
+3. **Teacher/lecturer review (required):** the allocated teaching staff member reads the original work and memorandum alongside AI scores/annotations, confirms or corrects each question mark, and records a reason including any changes to learner improvement feedback. This transitions scripts to `TeacherReviewed`.
+4. **HOD/academic moderation (required):** a different authorised reviewer inspects the reviewed result, corrections and evidence. The moderator either confirms it (`Moderated`) or returns it with a reason (`ReturnedToTeacher`).
+5. **Correction loop:** returned work goes back to teaching staff for another review. It cannot skip to moderation or final approval.
+6. **Final approval:** principal or authorised academic management approves a moderated result (`Approved`). Only approved results are exported for reporting.
 
-On HOD rejection: Marked → ReturnedForRemarking → Marked → Moderated → Approved
+## Current API
 
-The `ReturnedForRemarking` state is distinct from a never-marked submission. The marker may edit and resubmit it. The HOD must review again before approval; neither returned nor merely marked work can bypass moderation. Audit history retains the HOD's reason.
+- `POST /api/ai/batches/{batchId}/scripts/{scriptId}/review` — teacher/lecturer confirms or corrects AI marks (ABP Mark permission).
+- `POST /api/ai/batches/{batchId}/scripts/{scriptId}/moderate` — HOD/academic moderator confirms (ABP Moderate permission).
+- `POST /api/ai/batches/{batchId}/scripts/{scriptId}/return` — moderator returns to teacher with reason (ABP Moderate permission).
+- `POST /api/ai/batches/{batchId}/scripts/{scriptId}/approve` — final approval (ABP Approve permission).
 
-### Existing protections
-- Server-controlled marker/moderator identity, ABP permissions and school/academic allocation checks
-- Marker cannot moderate own work
-- Rubric range and complete criterion validation
-- Version/revision conflict checks
-- Moderated and approved results locked from ordinary remarking
+Each POST uses the script's optimistic-concurrency revision and existing `AiReview` contract (reason plus confirmed marks for review/moderation). Server-side identity, academic allocations and separation-of-duty checks apply. The audit records capture the preceding score snapshot.
 
-### Separate PDF-script workflow — outstanding design decision
+## Status mapping
 
-The main modern workspace uses `AiScript` uploaded-paper batches, with statuses Uploaded, Queued, Processing, AwaitingModeration, NeedsAttention, Moderated, Approved. That workflow presently expects a model-produced result before moderation and **does not yet provide an independent human-only marking path from an uploaded PDF**.
+`Uploaded → Queued → Processing → AwaitingModeration/NeedsAttention → TeacherReviewed → Moderated → Approved`.
 
-To support operation before the model is ready, implement a separate manual initial marking action for uploaded scripts. That action must:
-1. Accept staff-confirmed question definitions, maximum marks, marks and comments with independent reviewer identity.
-2. Save a versioned human-authored result separate from an AI-generated suggestion.
-3. Transition Uploaded → AwaitingModeration (human), then allow HOD return/revise and approval.
-4. Enforce authorised grade/subject or faculty/module allocation, non-self-moderation and audit history.
-5. Update the main React queues and review desk to support this mode without pretending a trained model exists.
+Existing `AwaitingModeration` status is retained for stored-data compatibility but **displayed as Awaiting teacher review**; its database name is legacy. If returned from HOD, `TeacherReviewed → ReturnedToTeacher → TeacherReviewed`. The new statuses are stored as strings in the existing column, so no schema change is required.
 
-**Current commit corrects the legacy text submission lifecycle only.** Do not treat the main uploaded-PDF workflow as fully repaired.
+## Important scope boundary
+
+**No AI model has been trained or deployed yet.** The normal application does not create fake academic AI marks. Scripts can be uploaded and retained, but teacher-review actions are not enabled until a real model result exists. Research UI fixtures/test data are fictional and never released as results.
+
+The older text-submission `/api/submissions` workflow remains as a compatibility adapter but is not the product's current marking workflow. No separate human-first PDF grading path is being implemented.
+
+## Verification
+
+Source changes and regression tests are committed, but a full clean frontend/backend test run and database-backed end-to-end walkthrough have not yet been verified. Do not use real learners or deploy publicly before those checks and appropriate security assurance.
