@@ -10,14 +10,14 @@ public partial class SubmissionRow
 {
     public void RecordMarks(string actor, Dictionary<Guid, decimal> marks, string? feedback, IReadOnlyList<Criterion> criteria)
     {
-        if (Status is not ("Submitted" or "Marked")) throw new BusinessException(WorkflowErrors.Locked);
+        if (Status is not ("Submitted" or "Marked" or "ReturnedForRemarking")) throw new BusinessException(WorkflowErrors.Locked);
         if (marks.Count != criteria.Count || criteria.Any(c => !marks.TryGetValue(c.Id, out var m) || m < 0 || m > c.MaxMarks)) throw new BusinessException(WorkflowErrors.Marks);
         MarksJson = AppJson.Write(marks); Feedback = feedback; LastMarkerId = actor; Status = "Marked"; AddAudit(actor, "Marked", feedback ?? "");
     }
     public void Moderate(string actor, bool approve, string comments)
     {
         if (Status != "Marked" || LastMarkerId == actor) throw new BusinessException(WorkflowErrors.Locked);
-        Status = approve ? "Moderated" : "Submitted"; AddAudit(actor, approve ? "Moderated" : "Returned", comments);
+        Status = approve ? "Moderated" : "ReturnedForRemarking"; AddAudit(actor, approve ? "Moderated" : "Returned", comments);
     }
     public void Approve(string actor)
     {
