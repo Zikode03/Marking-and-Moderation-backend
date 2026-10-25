@@ -83,6 +83,7 @@ public class ScriptBatchAppService : ProsperaAppService, IScriptBatchAppService
     public virtual async Task<OperationResult> ReviewAsync(Guid id, Guid scriptId, AiReview review)
     {
         var p = Principal;
+        var user = await users.GetUserAsync(p); if (user is null) return Results.Unauthorized();
         if (await Batch(id, p, users, access) is null) return Results.NotFound();
         var script = await AsyncExecuter.FirstOrDefaultAsync((await AiScriptsRepository.GetQueryableAsync()), s => s.Id == scriptId && s.BatchId == id);
         if (script is null) return Results.NotFound();
@@ -93,7 +94,7 @@ public class ScriptBatchAppService : ProsperaAppService, IScriptBatchAppService
         foreach (var q in result.Questions)
             if (!review.Marks.TryGetValue(q.Number, out var mark) || mark < 0 || mark > q.MaxMarks)
                 return Results.BadRequest(new { error = "Each confirmed mark must be within the approved memorandum limits." });
-        script.ConfirmTeacherReview(p.Identity?.Name ?? "teacher", review.Marks, review.Reason!.Trim());
+        script.ConfirmTeacherReview(user.Id, review.Marks, review.Reason!.Trim());
         await AiScriptsRepository.UpdateAsync(script);
         await UnitOfWorkManager.Current!.SaveChangesAsync();
         return Results.Ok(script.View());
@@ -102,12 +103,13 @@ public class ScriptBatchAppService : ProsperaAppService, IScriptBatchAppService
     [Volo.Abp.Uow.UnitOfWork(true)]
     public virtual async Task<OperationResult> ReturnToTeacherAsync(Guid id, Guid scriptId, AiReview review)
     {
+        var reviewer = await users.GetUserAsync(Principal); if (reviewer is null) return Results.Unauthorized();
         if (await Batch(id, Principal, users, access) is null) return Results.NotFound();
         var script = await AsyncExecuter.FirstOrDefaultAsync((await AiScriptsRepository.GetQueryableAsync()), s => s.Id == scriptId && s.BatchId == id);
         if (script is null) return Results.NotFound();
         if (script.Revision != review.Revision || script.Status != "TeacherReviewed") return Conflict();
         if (!InputRules.Text(review.Reason, 5000)) return Results.BadRequest(new { error = "Explain the feedback to the teacher." });
-        script.ReturnToTeacher(Principal.Identity?.Name ?? "moderator", review.Reason!.Trim());
+        script.ReturnToTeacher(reviewer.Id, review.Reason!.Trim());
         await AiScriptsRepository.UpdateAsync(script);
         await UnitOfWorkManager.Current!.SaveChangesAsync();
         return Results.Ok(script.View());
@@ -117,6 +119,7 @@ public class ScriptBatchAppService : ProsperaAppService, IScriptBatchAppService
     public virtual async Task<OperationResult> ModerateAsync(Guid id, Guid scriptId, AiReview review)
     {
         var p = Principal;
+        var moderator = await users.GetUserAsync(p); if (moderator is null) return Results.Unauthorized();
 
         if (await Batch(id, p, users, access) is null) return Results.NotFound();
         var script = await AsyncExecuter.FirstOrDefaultAsync((await AiScriptsRepository.GetQueryableAsync()), s => s.Id == scriptId && s.BatchId == id);
@@ -126,7 +129,7 @@ public class ScriptBatchAppService : ProsperaAppService, IScriptBatchAppService
         if (!InputRules.Text(review.Reason, 5000) || review.Marks is null || review.Marks.Count != result.Questions.Count) return Results.BadRequest(new { error = "Confirm every question and give a moderation reason." });
         foreach (var q in result.Questions) if (!review.Marks.TryGetValue(q.Number, out var mark) || mark < 0 || mark > q.MaxMarks) return Results.BadRequest(new { error = "Marks must be within the memorandum question limits." });
 
-        script.ConfirmModeration(p.Identity?.Name ?? "moderator", review.Marks, review.Reason!.Trim());
+        script.ConfirmModeration(moderator.Id, review.Marks, review.Reason!.Trim());
         await AiScriptsRepository.UpdateAsync(script);
         await UnitOfWorkManager.Current!.SaveChangesAsync(); return Results.Ok(script.View());
 
