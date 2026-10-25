@@ -63,6 +63,8 @@ public class PortalController(IAssessmentAppService assessment, ISubmissionAppSe
     public async Task<IActionResult> ScriptBatchGet6Async(Guid id, string file) => Convert(await scriptbatch.DownloadFileAsync(id, file));
     [HttpPost("/api/ai/batches/{id:guid}/scripts/{scriptId:guid}/review")]
     public async Task<IActionResult> ScriptBatchReviewAsync(Guid id, Guid scriptId, [FromBody] AiReview review) => Convert(await scriptbatch.ReviewAsync(id, scriptId, review));
+    [HttpPost("/api/ai/batches/{id:guid}/scripts/{scriptId:guid}/return")]
+    public async Task<IActionResult> ScriptBatchReturnAsync(Guid id, Guid scriptId, [FromBody] AiReview review) => Convert(await scriptbatch.ReturnToTeacherAsync(id, scriptId, review));
     [HttpPost("/api/ai/batches/{id:guid}/scripts/{scriptId:guid}/moderate")]
     public async Task<IActionResult> ScriptBatchPost7Async(Guid id, Guid scriptId, [FromBody] AiReview review) => Convert(await scriptbatch.ModerateAsync(id, scriptId, review));
     [HttpPost("/api/ai/batches/{id:guid}/scripts/{scriptId:guid}/approve")]
