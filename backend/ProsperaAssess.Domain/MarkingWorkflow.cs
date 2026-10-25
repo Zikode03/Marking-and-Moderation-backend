@@ -46,10 +46,21 @@ public partial class AiScript
         if (Status is not ("Uploaded" or "Failed")) throw new BusinessException(WorkflowErrors.Locked);
         Status = "Queued"; Error = null; Audit(actor, "Queued", "Requested local AI marking");
     }
+    public void ConfirmTeacherReview(string actor, Dictionary<string, decimal> marks, string reason)
+    {
+        var result = Result();
+        if (Status is not ("AwaitingModeration" or "NeedsAttention" or "ReturnedToTeacher") || result is null) throw new BusinessException(WorkflowErrors.Locked);
+        if (string.IsNullOrWhiteSpace(reason) || marks.Count != result.Questions.Count ||
+            result.Questions.Any(q => !marks.TryGetValue(q.Number, out var m) || m < 0 || m > q.MaxMarks)) throw new BusinessException(WorkflowErrors.Marks);
+        Audit(actor, "TeacherReviewStarted", reason);
+        ResultJson = AppJson.Write(result with { NeedsAttention = false, Questions = result.Questions.Select(q => q with { Marks = marks[q.Number], NeedsReview = false }).ToList() });
+        Status = "TeacherReviewed";
+        Audit(actor, "TeacherReviewed", reason);
+    }
     public void ConfirmModeration(string actor, Dictionary<string, decimal> marks, string reason)
     {
         var result = Result();
-        if (Status is not ("AwaitingModeration" or "NeedsAttention") || result is null) throw new BusinessException(WorkflowErrors.Locked);
+        if (Status != "TeacherReviewed" || result is null) throw new BusinessException(WorkflowErrors.Locked);
         if (marks.Count != result.Questions.Count || result.Questions.Any(q => !marks.TryGetValue(q.Number, out var m) || m < 0 || m > q.MaxMarks)) throw new BusinessException(WorkflowErrors.Marks);
         Audit(actor, "ModerationStarted", reason);
         ResultJson = AppJson.Write(result with { NeedsAttention = false, Questions = result.Questions.Select(q => q with { Marks = marks[q.Number], NeedsReview = false }).ToList() });
