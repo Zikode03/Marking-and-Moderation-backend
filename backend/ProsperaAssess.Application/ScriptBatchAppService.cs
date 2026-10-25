@@ -100,6 +100,20 @@ public class ScriptBatchAppService : ProsperaAppService, IScriptBatchAppService
     }
     [Microsoft.AspNetCore.Authorization.Authorize(ProsperaPermissions.Moderate)]
     [Volo.Abp.Uow.UnitOfWork(true)]
+    public virtual async Task<OperationResult> ReturnToTeacherAsync(Guid id, Guid scriptId, AiReview review)
+    {
+        if (await Batch(id, Principal, users, access) is null) return Results.NotFound();
+        var script = await AsyncExecuter.FirstOrDefaultAsync((await AiScriptsRepository.GetQueryableAsync()), s => s.Id == scriptId && s.BatchId == id);
+        if (script is null) return Results.NotFound();
+        if (script.Revision != review.Revision || script.Status != "TeacherReviewed") return Conflict();
+        if (!InputRules.Text(review.Reason, 5000)) return Results.BadRequest(new { error = "Explain the feedback to the teacher." });
+        script.ReturnToTeacher(Principal.Identity?.Name ?? "moderator", review.Reason!.Trim());
+        await AiScriptsRepository.UpdateAsync(script);
+        await UnitOfWorkManager.Current!.SaveChangesAsync();
+        return Results.Ok(script.View());
+    }
+    [Microsoft.AspNetCore.Authorization.Authorize(ProsperaPermissions.Moderate)]
+    [Volo.Abp.Uow.UnitOfWork(true)]
     public virtual async Task<OperationResult> ModerateAsync(Guid id, Guid scriptId, AiReview review)
     {
         var p = Principal;
