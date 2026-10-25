@@ -1,0 +1,18 @@
+{
+  "culture": "en",
+  "texts": {
+    "Permission:Group": "Prospera marking and moderation",
+    "Permission:Workspace": "Access academic workspace",
+    "Permission:Mark": "Mark allocated scripts",
+    "Permission:Upload": "Upload scripts and start AI marking",
+    "Permission:Moderate": "Moderate marked scripts",
+    "Permission:Approve": "Approve moderated results",
+    "Permission:ManageAcademics": "Manage faculties, modules and allocations",
+    "Permission:CreateStaff": "Create staff accounts",
+    "Permission:LabelTraining": "Label model-training examples",
+    "Prospera:WorkflowLocked": "This work is not ready for that action or its results are locked.",
+    "Prospera:InvalidMarks": "Question marks must stay within the approved marking guide.",
+    "Prospera:RoleNotFound": "The requested role does not exist.",
+    "Prospera:UserNotFound": "The requested user does not exist."
+  }
+}

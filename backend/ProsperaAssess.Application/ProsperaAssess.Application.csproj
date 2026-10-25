@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Volo.Abp.Ddd.Application" Version="$(AbpVersion)" />
+    <ProjectReference Include="../ProsperaAssess.Domain/ProsperaAssess.Domain.csproj" />
+    <ProjectReference Include="../ProsperaAssess.Application.Contracts/ProsperaAssess.Application.Contracts.csproj" />
+    <PackageReference Include="Volo.Abp.PermissionManagement.Domain" Version="$(AbpVersion)" />
+  </ItemGroup>
+</Project>

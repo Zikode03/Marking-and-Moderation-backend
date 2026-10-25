@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Volo.Abp.Ddd.Application.Contracts" Version="$(AbpVersion)" />
+    <ProjectReference Include="../ProsperaAssess.Domain.Shared/ProsperaAssess.Domain.Shared.csproj" />
+    <PackageReference Include="Volo.Abp.Authorization" Version="$(AbpVersion)" />
+  </ItemGroup>
+</Project>

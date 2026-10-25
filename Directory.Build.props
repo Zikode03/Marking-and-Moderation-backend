@@ -1,0 +1,6 @@
+<Project>
+  <PropertyGroup>
+    <AbpVersion>9.3.6</AbpVersion>
+    <EfCoreVersion>9.0.10</EfCoreVersion>
+  </PropertyGroup>
+</Project>

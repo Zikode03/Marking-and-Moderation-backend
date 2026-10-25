@@ -1,5 +1,9 @@
 **/bin/
 **/obj/
+.vs/
+.venv/
+**/.venv/
+TestResults/
 **/__pycache__/
 **/.pytest_cache/
 .env

@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <UserSecretsId>15b72af6-9673-47c0-87c7-1f4aed351fb2</UserSecretsId>
+  </PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="Volo.Abp.Autofac" Version="$(AbpVersion)" />
+    <ProjectReference Include="../ProsperaAssess.Application/ProsperaAssess.Application.csproj" />
+    <ProjectReference Include="../ProsperaAssess.EntityFrameworkCore/ProsperaAssess.EntityFrameworkCore.csproj" />
+  </ItemGroup>
+</Project>
