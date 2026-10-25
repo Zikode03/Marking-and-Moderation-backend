@@ -76,7 +76,9 @@ public class BackendTests(ApiFixture fixture) : IClassFixture<ApiFixture>
         using var hod = fixture.Client("HOD");
         await Body(await teacher.PostAsJsonAsync(path + "/mark", Marks(assessment)), HttpStatusCode.OK);
         var returned = await Body(await hod.PostAsJsonAsync(path + "/moderate", new { approve = false, comments = "Please review" }), HttpStatusCode.OK);
-        Assert.Equal("Submitted", returned.GetProperty("status").GetString());
+        Assert.Equal("ReturnedForRemarking", returned.GetProperty("status").GetString());
+        using var principal = fixture.Client("Principal");
+        Assert.Equal(HttpStatusCode.Conflict, (await principal.PostAsJsonAsync(path + "/approve", new { })).StatusCode);
         await Body(await teacher.PostAsJsonAsync(path + "/mark", Marks(assessment, 8)), HttpStatusCode.OK);
     }
 
