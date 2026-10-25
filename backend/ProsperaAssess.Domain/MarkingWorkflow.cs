@@ -59,6 +59,7 @@ public partial class AiScript
     }
     public void ConfirmModeration(string actor, Dictionary<string, decimal> marks, string reason)
     {
+        if (LatestTeacherReviewer() == actor) throw new BusinessException(WorkflowErrors.Locked);
         var result = Result();
         if (Status != "TeacherReviewed" || result is null) throw new BusinessException(WorkflowErrors.Locked);
         if (marks.Count != result.Questions.Count || result.Questions.Any(q => !marks.TryGetValue(q.Number, out var m) || m < 0 || m > q.MaxMarks)) throw new BusinessException(WorkflowErrors.Marks);
@@ -66,8 +67,12 @@ public partial class AiScript
         ResultJson = AppJson.Write(result with { NeedsAttention = false, Questions = result.Questions.Select(q => q with { Marks = marks[q.Number], NeedsReview = false }).ToList() });
         Status = "Moderated"; Audit(actor, "Moderated", reason);
     }
+    private string? LatestTeacherReviewer() =>
+        (System.Text.Json.JsonSerializer.Deserialize<List<AiHistory>>(AuditJson, AppJson.Options) ?? [])
+        .LastOrDefault(h => h.Action == "TeacherReviewed")?.Actor;
     public void ReturnToTeacher(string actor, string reason)
     {
+        if (LatestTeacherReviewer() == actor) throw new BusinessException(WorkflowErrors.Locked);
         if (Status != "TeacherReviewed" || string.IsNullOrWhiteSpace(reason)) throw new BusinessException(WorkflowErrors.Locked);
         Status = "ReturnedToTeacher"; Audit(actor, "ReturnedToTeacher", reason);
     }
