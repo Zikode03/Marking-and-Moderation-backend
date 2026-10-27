@@ -57,7 +57,8 @@ public class TrainingAppService : ProsperaAppService, ITrainingAppService
         var p = Principal;
         var scriptQuery = await AiScriptsRepository.GetQueryableAsync();
 
-        if (await Allowed(id, p, users, access) is null) return Results.NotFound();
+        if (await Allowed(id, p, users, access) is not { } owner) return Results.NotFound();
+        if (!await AsyncExecuter.AnyAsync((await InstitutionRecords.GetQueryableAsync()), r => r.SchoolId == owner.SchoolId && r.Kind == "trainingAuthorisation" && r.Code == id.ToString() && r.Active)) return Results.Json(new {error="An institution administrator must authorise training export under Learner data protection first."}, statusCode:403);
         var examples = await AsyncExecuter.ToListAsync((await AiTrainingExamplesRepository.GetQueryableAsync()).Where(e => e.VerifiedBy != null && scriptQuery.Any(s => s.Id == e.ScriptId && s.BatchId == id)));
         var batch = await AsyncExecuter.FirstAsync((await AiBatchesRepository.GetQueryableAsync()), b => b.Id == id);
         var parent = await AsyncExecuter.FirstAsync((await AssessmentsRepository.GetQueryableAsync()), a => a.Id == batch.AssessmentId);

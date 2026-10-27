@@ -16,3 +16,6 @@ TestResults/
 *.db
 training-data/
 datasets/
+
+artifacts/
+.secrets/

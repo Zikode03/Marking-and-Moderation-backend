@@ -1,6 +1,6 @@
 # Prospera Assess backend
 
-Layered ABP 9.3.6 / .NET 9 backend for uploading existing papers, approved memorandums and scripts, local AI marking, moderation and approval. Assessment authoring remains disabled. The proprietary model is awaiting training data; no trained marking model is deployed.
+Layered ABP 10.7.0 / .NET 10 backend for uploading existing papers, approved memorandums and scripts, local AI marking, moderation and approval. Assessment authoring remains disabled. The proprietary model is awaiting training data; no trained marking model is deployed.
 
 See [ABP_ARCHITECTURE.md](docs/ABP_ARCHITECTURE.md) for project boundaries, permissions, repositories, auditing, migration adoption and the retained authentication adapter.
 
@@ -23,6 +23,10 @@ dotnet test ProsperaAssess.sln
 dotnet build ProsperaAssess.sln --configuration Release
 ```
 
-The Dockerfile provides `api` and `dbmigrator` targets. The frontend workspace's Docker Compose uses the mirrored backend sources under .local/backend.
+The Dockerfile provides `api` and `dbmigrator` targets. The frontend workspace's Docker Compose uses a sibling checkout or explicit BACKEND_CONTEXT. The staging profile validates reviewed repository revisions and uses mounted secrets.
 
 The local model service remains in ai-service. See [AI_MARKING.md](docs/AI_MARKING.md) for uploads, the memo-grounded file contract, language metadata, annotations and training-data preparation.
+
+## Account security and staging
+
+The host now supports password recovery/change, authenticator MFA and recovery codes, all-session revocation, protected refresh cookies and OpenAPI generation/validation. See [STAGING_AND_SECURITY.md](docs/STAGING_AND_SECURITY.md). Live hosting, DNS, licensed SQL and outgoing SMTP credentials must be configured separately.

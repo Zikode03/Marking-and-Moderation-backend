@@ -5,6 +5,7 @@ public static class LegacyTokenProtection
 {
     public static void Configure(IServiceCollection services, IConfiguration configuration, IHostEnvironment environment)
     {
+        if (configuration["DataProtection:KeyDirectory"] is { Length: > 0 } keys) services.AddDataProtection().PersistKeysToFileSystem(new DirectoryInfo(keys));
         // Moving the host project must not change the protection purposes of installed bearer/refresh tokens.
         services.PostConfigure<DataProtectionOptions>(options =>
         {

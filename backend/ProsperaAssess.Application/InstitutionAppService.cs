@@ -45,6 +45,7 @@ public class InstitutionAppService : ProsperaAppService, IInstitutionAppService
         if (!AcademicAccess.Manager(Principal)) return Results.Forbid();
         if (!Schema.TryGetValue(kind, out var allowed)) return Results.NotFound();
         if (!InputRules.Text(input.Code, 100) || !InputRules.Text(input.Name, 200) || input.Fields is null || input.Fields.Count > allowed.Length || input.Fields.Any(p => !allowed.Contains(p.Key) || p.Value is null || p.Value.Length > 5000)) return Invalid("Provide valid code, name and module fields.");
+        if (kind == "settings") await LazyServiceProvider.LazyGetRequiredService<IStorageControl>().LockAsync(user.SchoolId);
         var data = input.Fields.ToDictionary(p => p.Key, p => p.Value.Trim());
         string F(string key) => data.GetValueOrDefault(key, "");
         bool Number(string key, int min, int max, bool optional = false) => optional && F(key) == "" || int.TryParse(F(key), out var n) && n >= min && n <= max;

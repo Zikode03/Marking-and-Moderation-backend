@@ -29,8 +29,8 @@ public sealed class SmtpSalesMailTransport(IConfiguration configuration, ILogger
 {
     public async Task<bool> SendAsync(SalesEnquiryInput input)
     {
-        var host = configuration["SalesMail:Host"];
-        var from = configuration["SalesMail:From"];
+        var host = (configuration["Mail:Host"] ?? configuration["SalesMail:Host"]);
+        var from = (configuration["Mail:From"] ?? configuration["SalesMail:From"]);
         var recipient = configuration["SalesMail:Recipient"];
         if (string.IsNullOrWhiteSpace(host) || string.IsNullOrWhiteSpace(from) || string.IsNullOrWhiteSpace(recipient))
         {
@@ -47,15 +47,15 @@ public sealed class SmtpSalesMailTransport(IConfiguration configuration, ILogger
                 BodyEncoding = System.Text.Encoding.UTF8
             };
             message.ReplyToList.Add(new MailAddress(input.Email.Trim()));
-            using var smtp = new SmtpClient(host, configuration.GetValue("SalesMail:Port", 587))
+            using var smtp = new SmtpClient(host, configuration.GetValue("Mail:Port", configuration.GetValue("SalesMail:Port", 587)))
             {
                 EnableSsl = true,
                 UseDefaultCredentials = false,
                 DeliveryMethod = SmtpDeliveryMethod.Network
             };
-            var username = configuration["SalesMail:Username"];
+            var username = (configuration["Mail:Username"] ?? configuration["SalesMail:Username"]);
             if (!string.IsNullOrWhiteSpace(username))
-                smtp.Credentials = new NetworkCredential(username, configuration["SalesMail:Password"]);
+                smtp.Credentials = new NetworkCredential(username, (configuration["Mail:Password"] ?? configuration["SalesMail:Password"]));
             await smtp.SendMailAsync(message).WaitAsync(TimeSpan.FromSeconds(15));
             return true;
         }

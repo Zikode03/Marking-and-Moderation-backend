@@ -5,6 +5,7 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Xunit;
+using Microsoft.Extensions.Configuration;
 
 namespace ProsperaAssess.Api.Tests;
 
@@ -58,6 +59,8 @@ public class AiTests(ApiFixture fixture) : IClassFixture<ApiFixture>
         var label = new { questionNumber = "1", question = "What is 2+2?", answer = "4", rubric = "4 earns 2 marks", maxMarks = 2, marks = 2 };
         var created = await teacher.PostAsJsonAsync($"/api/ai/batches/{batch}/scripts/{script}/training", label); Assert.Equal(HttpStatusCode.Created, created.StatusCode);
         var example = (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid();
+        Assert.Equal(HttpStatusCode.Forbidden, (await admin.GetAsync($"/api/ai/batches/{batch}/training/export")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await admin.PostAsJsonAsync($"/api/data-protection/batches/{batch}/training-authorisation", new {enabled=true, reason="Synthetic dataset approval TEST-001"})).StatusCode);
         Assert.Equal("", await admin.GetStringAsync($"/api/ai/batches/{batch}/training/export"));
         Assert.Equal(HttpStatusCode.Forbidden, (await teacher.PostAsync($"/api/ai/batches/{batch}/training/{example}/verify", null)).StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await hod.PostAsync($"/api/ai/batches/{batch}/training/{example}/verify", null)).StatusCode);
@@ -140,6 +143,36 @@ public class AiTests(ApiFixture fixture) : IClassFixture<ApiFixture>
         Assert.Throws<InvalidOperationException>(() => LocalMarker.Validate(new(true, "Bad location", [new("1", 5, 2, "answer", "feedback", true, "Memo point", "zu", 0.9m, [new(1, 0.9m, 0.2m, 0.5m, 0.1m, "alternative_answer", "Check")])]), true));
         LocalMarker.Validate(new(true, "Review", [new("1", 5, null, "answer", "feedback", true, "Memo point", "zu", 0.2m, [new(1, 0.1m, 0.2m, 0.2m, 0.1m, "uncertain_handwriting", "Check reading")])]), true);
     }
+    [Fact]
+    public async Task UploadQuotaRejectsBeforePersistingAnyBatch()
+    {
+        using var factory=fixture.Factory.WithWebHostBuilder(builder=>builder.ConfigureAppConfiguration((_,config)=>config.AddInMemoryCollection(new Dictionary<string,string?>{{"Storage:TenantQuotaBytes","1"}})));
+        using var client=factory.CreateClient();client.DefaultRequestHeaders.Authorization=fixture.Client("Teacher").DefaultRequestHeaders.Authorization;
+        var before=(await client.GetFromJsonAsync<JsonElement>("/api/ai/batches")).GetArrayLength();
+        using var files=Files(); Assert.Equal((HttpStatusCode)507,(await client.PostAsync("/api/ai/batches",files)).StatusCode);
+        Assert.Equal(before,(await client.GetFromJsonAsync<JsonElement>("/api/ai/batches")).GetArrayLength());
+    }
+    [Fact]
+    public async Task ScannerOutageRejectsBeforePersistingAnyBatch()
+    {
+        using var factory=fixture.Factory.WithWebHostBuilder(builder=>builder.ConfigureServices(services=>{services.RemoveAll<IUploadSafety>();services.AddSingleton<IUploadSafety,UnavailableScanner>();}));
+        using var client=factory.CreateClient();client.DefaultRequestHeaders.Authorization=fixture.Client("Teacher").DefaultRequestHeaders.Authorization;
+        var before=(await client.GetFromJsonAsync<JsonElement>("/api/ai/batches")).GetArrayLength();
+        using var files=Files(); Assert.Equal(HttpStatusCode.ServiceUnavailable,(await client.PostAsync("/api/ai/batches",files)).StatusCode);
+        Assert.Equal(before,(await client.GetFromJsonAsync<JsonElement>("/api/ai/batches")).GetArrayLength());
+    }
+    [Fact]
+    public async Task ConcurrentDuplicateUploadsPersistExactlyOneBatch()
+    {
+        using var teacher=fixture.Client("Teacher"); using var form=Files();
+        var payload=await form.ReadAsByteArrayAsync();var type=form.Headers.ContentType!.ToString();
+        ByteArrayContent Copy(){var content=new ByteArrayContent(payload);content.Headers.ContentType=System.Net.Http.Headers.MediaTypeHeaderValue.Parse(type);return content;}
+        using var first=Copy();using var second=Copy();
+        var responses=await Task.WhenAll(teacher.PostAsync("/api/ai/batches",first),teacher.PostAsync("/api/ai/batches",second));
+        Assert.Single(responses.Where(r=>r.StatusCode==HttpStatusCode.Created));Assert.Single(responses.Where(r=>r.StatusCode==HttpStatusCode.Conflict));
+        foreach(var response in responses) response.Dispose();
+    }
+    private sealed class UnavailableScanner : IUploadSafety {public Task CheckAsync(byte[] content,CancellationToken ct)=>throw new PortalBusinessException(503,new {error="Test scanner unavailable"});}
     private sealed class TestModelTransport : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)

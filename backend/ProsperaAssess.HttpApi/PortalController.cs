@@ -83,6 +83,7 @@ public class PortalController(IAssessmentAppService assessment, ISubmissionAppSe
     public async Task<IActionResult> StaffPost2Async([FromBody] CreateStaffRequest request) => Convert(await staff.CreateAsync(request));
     [Microsoft.AspNetCore.Authorization.Authorize(ProsperaPermissions.Upload)]
     [HttpPost("/api/ai/batches")]
+    [Microsoft.AspNetCore.RateLimiting.EnableRateLimiting("uploads")]
     [RequestSizeLimit(60 * 1024 * 1024)]
     public async Task<IActionResult> UploadAsync(CancellationToken ct)
     {

@@ -1,0 +1,39 @@
+name: Backend and OpenAPI checks
+on: [push, pull_request]
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    env:
+      PROSPERA_BACKUP_EVIDENCE_OUTPUT: ${{ github.workspace }}/artifacts/backup-restore-evidence.json
+      PROSPERA_OPENAPI_OUTPUT: ${{ github.workspace }}/artifacts/openapi-v1.json
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Start disposable SQL Server
+        shell: bash
+        run: |
+          password="$(openssl rand -hex 20)aA1!"
+          echo "::add-mask::$password"
+          echo "PROSPERA_TEST_SQL=Server=127.0.0.1,14332;Database=master;User Id=sa;Password=$password;Encrypt=True;TrustServerCertificate=True" >> "$GITHUB_ENV"
+          docker run -d --name prospera-test-sql -e ACCEPT_EULA=Y -e "MSSQL_SA_PASSWORD=$password" -p 127.0.0.1:14332:1433 mcr.microsoft.com/mssql/server:2022-latest
+          for attempt in $(seq 1 60); do
+            if docker exec -e "SQLCMDPASSWORD=$password" prospera-test-sql /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -C -Q 'SELECT 1' -b -o /dev/null; then exit 0; fi
+            sleep 2
+          done
+          exit 1
+      - run: dotnet restore ProsperaAssess.sln --locked-mode -warnaserror:NU1900,NU1901,NU1902,NU1903,NU1904
+      - run: dotnet test ProsperaAssess.sln -c Release --no-restore --logger trx --results-directory artifacts/test-results
+      - run: docker build --target api -t prospera-api:ci .
+      - run: docker build --target dbmigrator -t prospera-migrator:ci .
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install openapi-spec-validator==0.9.0
+      - run: python -m openapi_spec_validator artifacts/openapi-v1.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: api-contract-and-results
+          path: artifacts/

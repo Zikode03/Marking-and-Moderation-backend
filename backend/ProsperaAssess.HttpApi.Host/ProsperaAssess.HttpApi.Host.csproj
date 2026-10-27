@@ -2,12 +2,13 @@
   <PropertyGroup>
     <AssemblyName>ProsperaAssess.Api</AssemblyName>
     <RootNamespace>ProsperaAssess.Api</RootNamespace>
-    <TargetFramework>net9.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UserSecretsId>15b72af6-9673-47c0-87c7-1f4aed351fb2</UserSecretsId>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="$(EfCoreVersion)" />
     <PackageReference Include="Volo.Abp.AspNetCore" Version="$(AbpVersion)" />
     <PackageReference Include="Volo.Abp.EntityFrameworkCore" Version="$(AbpVersion)" />
     <PackageReference Include="Volo.Abp.Autofac" Version="$(AbpVersion)" />

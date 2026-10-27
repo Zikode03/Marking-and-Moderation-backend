@@ -24,6 +24,22 @@ public class InvitationAppService : ProsperaAppService, IInvitationAppService
         await InstitutionEvents.InsertAsync(new InstitutionEvent(GuidGenerator.Create()) { SchoolId = user.SchoolId, RecordId = row.Id, Actor = user.Id, Action = "staff.invited", AfterJson = AppJson.Write(new { email = row.Name, input.Role }), At = DateTimeOffset.UtcNow });
         await UnitOfWorkManager.Current!.SaveChangesAsync(); return Results.Ok(new { invitationPath = "/accept-invitation#token=" + token, expiresInDays = 7 });
     }
+    [Authorize(ProsperaPermissions.CreateStaff)]
+    [Volo.Abp.Auditing.DisableAuditing]
+    public virtual async Task<OperationResult> SendEmailAsync(SendInvitationEmailInput input)
+    {
+        var user = await users.GetUserAsync(Principal); if (user is null) return Results.Unauthorized();
+        if (!Principal.IsInRole("SchoolAdmin")) return Results.Forbid();
+        if (input.Token is null || input.Token.Length != 64 || !input.Token.All(Uri.IsHexDigit)) return Results.BadRequest(new { error = "Invalid invitation." });
+        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(input.Token)));
+        var row = await AsyncExecuter.FirstOrDefaultAsync((await InstitutionRecords.GetQueryableAsync()), r => r.SchoolId == user.SchoolId && r.Kind == "invitation" && r.Code == hash && r.Active);
+        if (row is null) return Results.NotFound();
+        var data = JsonSerializer.Deserialize<JsonElement>(row.DataJson);
+        if (data.GetProperty("expiresAt").GetDateTimeOffset() <= DateTimeOffset.UtcNow) return Results.BadRequest(new { error = "Create a new invitation; this one has expired." });
+        var mail = LazyServiceProvider.LazyGetRequiredService<IInvitationEmailSender>();
+        if (!await mail.SendAsync(data.GetProperty("email").GetString()!, "/accept-invitation#token=" + input.Token)) return Results.Json(new { error = "Email delivery failed. Retry or share the activation link privately." }, statusCode: 503);
+        return Results.Ok(new { message = "Invitation email sent." });
+    }
     [AllowAnonymous]
     [Volo.Abp.Auditing.DisableAuditing]
     [UnitOfWork(true)]

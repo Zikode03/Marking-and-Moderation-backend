@@ -34,7 +34,7 @@ public class ScriptBatchAppService : ProsperaAppService, IScriptBatchAppService
         if (await Batch(id, p, users, access) is null) return Results.NotFound();
         var rows = await AsyncExecuter.ToListAsync((await AiScriptsRepository.GetQueryableAsync()).Where(s => s.BatchId == id && s.Status == "Approved").Select(s => new { s.Candidate, s.ResultJson, s.Model }));
         await RecordRead(id, "results.exported");
-        static string Cell(string value) => "\"" + ((value.Length > 0 && "=+-@".Contains(value[0]) ? "'" : "") + value).Replace("\"", "\"\"") + "\"";
+        static string Cell(string value) => "\"" + ((value.Length > 0 && ("=+-@".Contains(value.TrimStart().FirstOrDefault()) || char.IsControl(value[0])) ? "'" : "") + value).Replace("\"", "\"\"") + "\"";
         var lines = new List<string> { "Candidate,Total,Maximum,Model" };
         lines.AddRange(rows.Select(s => string.Join(',', Cell(s.Candidate), JsonSerializer.Deserialize<AiMarkingResult>(s.ResultJson!, AppJson.Options)!.Questions.Sum(q => q.Marks ?? 0).ToString(System.Globalization.CultureInfo.InvariantCulture), JsonSerializer.Deserialize<AiMarkingResult>(s.ResultJson!, AppJson.Options)!.Questions.Sum(q => q.MaxMarks).ToString(System.Globalization.CultureInfo.InvariantCulture), Cell(s.Model ?? ""))));
         return Results.File(System.Text.Encoding.UTF8.GetBytes(string.Join('\n', lines)), "text/csv", "approved-results.csv");
@@ -160,12 +160,14 @@ public class ScriptBatchAppService : ProsperaAppService, IScriptBatchAppService
         var script = await AsyncExecuter.FirstOrDefaultAsync((await AiScriptsRepository.GetQueryableAsync()), s => s.Id == scriptId && s.BatchId == id);
         if (script is null) return Results.NotFound();
         if (script.Revision != review.Revision || script.Status != "Moderated") return Conflict();
-        script.Approve(p.Identity?.Name ?? "approver");
+        var approver = await users.GetUserAsync(p); if (approver is null) return Results.Unauthorized();
+        script.Approve(approver.Id);
         await AiScriptsRepository.UpdateAsync(script);
         await UnitOfWorkManager.Current!.SaveChangesAsync(); return Results.Ok(script.View());
 
     }
     [Microsoft.AspNetCore.Authorization.Authorize(ProsperaPermissions.Upload)]
+    [Volo.Abp.Uow.UnitOfWork(true)]
     public virtual async Task<OperationResult> UploadAsync(UploadBatchDto request, CancellationToken ct)
     {
         var p = Principal;
@@ -192,6 +194,7 @@ public class ScriptBatchAppService : ProsperaAppService, IScriptBatchAppService
             if (file.Length is < 1 or > 10 * 1024 * 1024 || Path.GetFileName(file.FileName).Length > 200) return Results.BadRequest(new { error = "Each PDF, PNG or JPEG must be non-empty, under 10 MB, with a filename under 200 characters." });
             var data = file.Content;
             var type = Detect(data, file.FileName); if (type is null) return Results.BadRequest(new { error = "Unsupported or mismatched file. Use PDF, PNG or JPEG." });
+            await LazyServiceProvider.LazyGetRequiredService<IUploadSafety>().CheckAsync(data, ct);
             loaded.Add((file, data, type));
         }
         var scriptFiles = loaded.Where(f => f.File.Name == "scripts").ToList();
@@ -221,6 +224,9 @@ public class ScriptBatchAppService : ProsperaAppService, IScriptBatchAppService
         }
         var paperFile = loaded.Single(f => f.File.Name == "paper"); var memoFile = loaded.Single(f => f.File.Name == "memo");
         var batch = new AiBatch(GuidGenerator.Create()) { AssessmentId = assessment.Id, CreatedAt = DateTimeOffset.UtcNow, UploadedBy = user.Id, PaperName = Path.GetFileName(paper.FileName), PaperType = paperFile.Type, Paper = paperFile.Data, MemoName = Path.GetFileName(memo.FileName), MemoType = memoFile.Type, Memo = memoFile.Data, ScriptLanguage = context.ScriptLanguage, MemoLanguage = context.MemoLanguage };
+        var storage = LazyServiceProvider.LazyGetRequiredService<IStorageControl>();
+        await storage.LockAsync(user.SchoolId, ct);
+        if (await storage.UsedBytesAsync(user.SchoolId, ct) + loaded.Sum(f => f.File.Length) > storage.QuotaBytes) return Results.Json(new {error="Institution storage quota reached. Ask your administrator to review retention or capacity."}, statusCode:507);
         if (context.PreviousBatchId is { } previousBatchId)
         {
             if (await Batch(previousBatchId, p, users, access) is null) return Results.NotFound();

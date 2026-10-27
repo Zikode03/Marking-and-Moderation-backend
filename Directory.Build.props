@@ -1,6 +1,7 @@
 <Project>
   <PropertyGroup>
-    <AbpVersion>9.3.6</AbpVersion>
-    <EfCoreVersion>9.0.10</EfCoreVersion>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <AbpVersion>10.7.0</AbpVersion>
+    <EfCoreVersion>10.0.14</EfCoreVersion>
   </PropertyGroup>
 </Project>

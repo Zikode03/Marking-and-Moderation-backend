@@ -2,6 +2,7 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
@@ -34,7 +35,9 @@ public sealed class ApiFixture : IAsyncLifetime
         SetEnvironment("Bootstrap__Password", "");
         SetEnvironment("Bootstrap__SchoolId", "");
         SetEnvironment("Database__Initialize", "true");
-        Factory = new WebApplicationFactory<Program>();
+        SetEnvironment("OpenApi__Enabled", "true");
+        SetEnvironment("App__PublicUrl", "https://test.example");
+        Factory = new WebApplicationFactory<Program>().WithWebHostBuilder(b => b.UseEnvironment("Testing"));
         using var client = Factory.CreateClient();
         using var scope = Factory.Services.CreateScope();
         var users = scope.ServiceProvider.GetRequiredService<UserManager<AppUser>>();

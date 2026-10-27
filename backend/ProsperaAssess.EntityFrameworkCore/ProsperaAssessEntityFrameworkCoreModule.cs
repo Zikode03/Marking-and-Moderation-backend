@@ -15,7 +15,7 @@ public class ProsperaAssessEntityFrameworkCoreModule : AbpModule
         context.Services.AddAbpDbContext<AssessDb>(options => options.AddDefaultRepositories(includeAllEntities: true));
         Configure<AbpDbContextOptions>(options => options.UseSqlServer());
         Configure<Volo.Abp.PermissionManagement.PermissionManagementOptions>(options => { options.ManagementProviders.Add<LegacyRolePermissionManagementProvider>(); options.ManagementProviders.Add<LegacyUserPermissionManagementProvider>(); });
-        context.Services.AddIdentityCore<AppUser>(o => o.User.RequireUniqueEmail = true).AddRoles<IdentityRole>().AddEntityFrameworkStores<AssessDb>();
+        context.Services.AddIdentityCore<AppUser>(o => { o.User.RequireUniqueEmail = true; o.Password.RequiredLength = 12; }).AddRoles<IdentityRole>().AddEntityFrameworkStores<AssessDb>();
         context.Services.AddTransient<IUserStore<AppUser>, PortalUserStore>();
         context.Services.AddTransient<IStaffIdentityService, StaffIdentityService>();
         context.Services.AddTransient<IAiQueueRepository, AiQueueRepository>();
