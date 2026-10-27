@@ -33,6 +33,7 @@ public class ScriptBatchAppService : ProsperaAppService, IScriptBatchAppService
 
         if (await Batch(id, p, users, access) is null) return Results.NotFound();
         var rows = await AsyncExecuter.ToListAsync((await AiScriptsRepository.GetQueryableAsync()).Where(s => s.BatchId == id && s.Status == "Approved").Select(s => new { s.Candidate, s.ResultJson, s.Model }));
+        await RecordRead(id, "results.exported");
         static string Cell(string value) => "\"" + ((value.Length > 0 && "=+-@".Contains(value[0]) ? "'" : "") + value).Replace("\"", "\"\"") + "\"";
         var lines = new List<string> { "Candidate,Total,Maximum,Model" };
         lines.AddRange(rows.Select(s => string.Join(',', Cell(s.Candidate), JsonSerializer.Deserialize<AiMarkingResult>(s.ResultJson!, AppJson.Options)!.Questions.Sum(q => q.Marks ?? 0).ToString(System.Globalization.CultureInfo.InvariantCulture), JsonSerializer.Deserialize<AiMarkingResult>(s.ResultJson!, AppJson.Options)!.Questions.Sum(q => q.MaxMarks).ToString(System.Globalization.CultureInfo.InvariantCulture), Cell(s.Model ?? ""))));
@@ -56,6 +57,11 @@ public class ScriptBatchAppService : ProsperaAppService, IScriptBatchAppService
         var p = Principal;
 
         if (await Batch(id, p, users, access) is not { } batch) return Results.NotFound();
+        var currentUser = await users.GetUserAsync(p); if (currentUser is null) return Results.Unauthorized();
+        var setting = await AsyncExecuter.FirstOrDefaultAsync((await InstitutionRecords.GetQueryableAsync()), r => r.SchoolId == currentUser.SchoolId && r.Kind == "settings" && r.Active);
+        if (setting is not null && (JsonSerializer.Deserialize<Dictionary<string,string>>(setting.DataJson, AppJson.Options) ?? []).GetValueOrDefault("requireMemoApproval") == "true" &&
+            !await AsyncExecuter.AnyAsync((await InstitutionRecords.GetQueryableAsync()), r => r.SchoolId == currentUser.SchoolId && r.Kind == "memoApproval" && r.Code == id.ToString()))
+            return Results.Conflict(new { error = "An independent academic reviewer must approve this memorandum version before marking." });
         var health = await marker.Health(ct);
         if (!health.Ready) return Results.Json(new { error = "The local marking model is not ready. Your uploaded files are saved; connect a trained model before starting." }, statusCode: 503);
         if (new[] { batch.ScriptLanguage, batch.MemoLanguage }.Any(code => MarkingLanguages.Codes.Contains(code) && health.Languages?.Contains(code) != true))
@@ -71,6 +77,7 @@ public class ScriptBatchAppService : ProsperaAppService, IScriptBatchAppService
         var p = Principal;
 
         if (await Batch(id, p, users, access) is not { } batch) return Results.NotFound();
+        await RecordRead(id, "document.downloaded:" + (file is "paper" or "memo" ? file : "script"));
         if (file == "paper") return Results.File(await AsyncExecuter.FirstAsync((await AiBatchesRepository.GetQueryableAsync()).Where(b => b.Id == id).Select(b => b.Paper)), batch.PaperType, batch.PaperName);
         if (file == "memo") return Results.File(await AsyncExecuter.FirstAsync((await AiBatchesRepository.GetQueryableAsync()).Where(b => b.Id == id).Select(b => b.Memo)), batch.MemoType, batch.MemoName);
         if (!Guid.TryParse(file, out var scriptId)) return Results.NotFound();
@@ -98,7 +105,10 @@ public class ScriptBatchAppService : ProsperaAppService, IScriptBatchAppService
             return Results.BadRequest(new { error = "Provide learner feedback for every question, limited to 5000 characters each." });
         if (review.Summary is not null && !InputRules.Text(review.Summary, 10000))
             return Results.BadRequest(new { error = "Overall learner feedback must be non-empty and at most 10000 characters." });
-        script.ConfirmTeacherReview(user.Id, review.Marks, review.Reason!.Trim(), review.Feedback, review.Summary);
+        await Assigned(script.Id, user.Id, "teacherId", user.SchoolId);
+        if (review.Evidence is { } evidence && (evidence.Count != result.Questions.Count || result.Questions.Any(q => !evidence.TryGetValue(q.Number,out var text) || text is null || text.Length > 30000)))
+            return Results.BadRequest(new { error = "Provide a learner-answer transcription for every question, limited to 30000 characters each." });
+        script.ConfirmTeacherReview(user.Id, review.Marks, review.Reason!.Trim(), review.Feedback, review.Summary, review.Evidence);
         await AiScriptsRepository.UpdateAsync(script);
         await UnitOfWorkManager.Current!.SaveChangesAsync();
         return Results.Ok(script.View());
@@ -113,6 +123,7 @@ public class ScriptBatchAppService : ProsperaAppService, IScriptBatchAppService
         if (script is null) return Results.NotFound();
         if (script.Revision != review.Revision || script.Status != "TeacherReviewed") return Conflict();
         if (!InputRules.Text(review.Reason, 5000)) return Results.BadRequest(new { error = "Explain the feedback to the teacher." });
+        await Assigned(script.Id, reviewer.Id, "moderatorId", reviewer.SchoolId);
         script.ReturnToTeacher(reviewer.Id, review.Reason!.Trim());
         await AiScriptsRepository.UpdateAsync(script);
         await UnitOfWorkManager.Current!.SaveChangesAsync();
@@ -133,6 +144,7 @@ public class ScriptBatchAppService : ProsperaAppService, IScriptBatchAppService
         if (!InputRules.Text(review.Reason, 5000) || review.Marks is null || review.Marks.Count != result.Questions.Count) return Results.BadRequest(new { error = "Confirm every question and give a moderation reason." });
         foreach (var q in result.Questions) if (!review.Marks.TryGetValue(q.Number, out var mark) || mark < 0 || mark > q.MaxMarks) return Results.BadRequest(new { error = "Marks must be within the memorandum question limits." });
 
+        await Assigned(script.Id, moderator.Id, "moderatorId", moderator.SchoolId);
         script.ConfirmModeration(moderator.Id, review.Marks, review.Reason!.Trim());
         await AiScriptsRepository.UpdateAsync(script);
         await UnitOfWorkManager.Current!.SaveChangesAsync(); return Results.Ok(script.View());
@@ -185,8 +197,41 @@ public class ScriptBatchAppService : ProsperaAppService, IScriptBatchAppService
         var scriptFiles = loaded.Where(f => f.File.Name == "scripts").ToList();
         var candidates = scriptFiles.Select(f => Path.GetFileNameWithoutExtension(f.File.FileName).Trim()).ToList();
         if (candidates.Any(c => string.IsNullOrWhiteSpace(c) || c.Length > 100) || candidates.Distinct(StringComparer.OrdinalIgnoreCase).Count() != candidates.Count || scriptFiles.Select(f => Convert.ToHexString(SHA256.HashData(f.Data))).Distinct().Count() != scriptFiles.Count) return Results.BadRequest(new { error = "Use a unique candidate/student number as each script filename. Duplicate files are not allowed." });
+        var settings = await AsyncExecuter.FirstOrDefaultAsync((await InstitutionRecords.GetQueryableAsync()), r => r.SchoolId == user.SchoolId && r.Kind == "settings" && r.Active);
+        var policy = settings is null ? new Dictionary<string, string>() : JsonSerializer.Deserialize<Dictionary<string, string>>(settings.DataJson, AppJson.Options) ?? [];
+        if (policy.GetValueOrDefault("requireEnrolment") == "true")
+        {
+            var learners = await AsyncExecuter.ToListAsync((await InstitutionRecords.GetQueryableAsync()).Where(r => r.SchoolId == user.SchoolId && r.Kind == "learner" && r.Active));
+            var enrolled = await AsyncExecuter.ToListAsync((await InstitutionRecords.GetQueryableAsync()).Where(r => r.SchoolId == user.SchoolId && r.Kind == "enrolment" && r.Active));
+            var classes = await AsyncExecuter.ToListAsync((await InstitutionRecords.GetQueryableAsync()).Where(r => r.SchoolId == user.SchoolId && r.Kind == "class" && r.Active));
+            bool MatchesContext(InstitutionRecord enrolment)
+            {
+                var values = JsonSerializer.Deserialize<Dictionary<string,string>>(enrolment.DataJson, AppJson.Options) ?? [];
+                if (context.Institution is { } university) return values.GetValueOrDefault("moduleId") == university.ModuleId.ToString() && values.GetValueOrDefault("academicYear") == university.AcademicYear.ToString();
+                var cohort = classes.FirstOrDefault(r => r.Id.ToString() == values.GetValueOrDefault("classId"));
+                var cohortFields = cohort is null ? new Dictionary<string,string>() : JsonSerializer.Deserialize<Dictionary<string,string>>(cohort.DataJson, AppJson.Options) ?? [];
+                return context.School is { } school && cohortFields.GetValueOrDefault("grade") == school.Grade.ToString() && values.GetValueOrDefault("academicYear") == (school.AcademicYear ?? DateTime.UtcNow.Year).ToString();
+            }
+            foreach (var candidate in candidates)
+            {
+                var learner = learners.FirstOrDefault(l => string.Equals(l.Code, candidate, StringComparison.OrdinalIgnoreCase));
+                if (learner is null || !enrolled.Any(e => (JsonSerializer.Deserialize<Dictionary<string, string>>(e.DataJson, AppJson.Options) ?? []).GetValueOrDefault("learnerId") == learner.Id.ToString() && MatchesContext(e)))
+                    return Results.BadRequest(new { error = "Every script filename must match an active candidate enrolled for this grade or module and academic year." });
+            }
+        }
         var paperFile = loaded.Single(f => f.File.Name == "paper"); var memoFile = loaded.Single(f => f.File.Name == "memo");
         var batch = new AiBatch(GuidGenerator.Create()) { AssessmentId = assessment.Id, CreatedAt = DateTimeOffset.UtcNow, UploadedBy = user.Id, PaperName = Path.GetFileName(paper.FileName), PaperType = paperFile.Type, Paper = paperFile.Data, MemoName = Path.GetFileName(memo.FileName), MemoType = memoFile.Type, Memo = memoFile.Data, ScriptLanguage = context.ScriptLanguage, MemoLanguage = context.MemoLanguage };
+        if (context.PreviousBatchId is { } previousBatchId)
+        {
+            if (await Batch(previousBatchId, p, users, access) is null) return Results.NotFound();
+            await InstitutionRecords.InsertAsync(new InstitutionRecord(GuidGenerator.Create()) { SchoolId = user.SchoolId, Kind = "documentVersion", Code = batch.Id.ToString(), Name = batch.MemoName, Revision = 1, DataJson = AppJson.Write(new Dictionary<string,string> { ["previousBatchId"] = previousBatchId.ToString() }) });
+        }
+        // Prevent accidental duplicate uploads within the same academic scope.
+        var relatedIds = (await access.Visible(user, p)).Where(a => a.SchoolJson == assessment.SchoolJson && a.InstitutionJson == assessment.InstitutionJson).Select(a => a.Id).ToList();
+        var relatedBatches = await AsyncExecuter.ToListAsync((await AiBatchesRepository.GetQueryableAsync()).Where(b => relatedIds.Contains(b.AssessmentId)).Select(b => b.Id));
+        var hashes = scriptFiles.Select(f => Convert.ToHexString(SHA256.HashData(f.Data))).ToList();
+        if (context.PreviousBatchId is null && await AsyncExecuter.AnyAsync((await AiScriptsRepository.GetQueryableAsync()), s => relatedBatches.Contains(s.BatchId) && hashes.Contains(s.Hash)))
+            return Results.Conflict(new { error = "A script in this academic context was already uploaded. Use a document revision when intentionally replacing an assessment version." });
         await AssessmentsRepository.InsertAsync(assessment); await AiBatchesRepository.InsertAsync(batch);
         foreach (var (file, data, type) in scriptFiles)
         {
@@ -196,6 +241,17 @@ public class ScriptBatchAppService : ProsperaAppService, IScriptBatchAppService
         await UnitOfWorkManager.Current!.SaveChangesAsync(ct);
         return Results.Created($"/api/ai/batches/{batch.Id}", new { batch.Id, batch.AssessmentId });
 
+    }
+    private async Task RecordRead(Guid batchId, string action)
+    {
+        var user = await users.GetUserAsync(Principal); if (user is null) throw new PortalBusinessException(401,null);
+        await InstitutionEvents.InsertAsync(new InstitutionEvent(GuidGenerator.Create()) { SchoolId = user.SchoolId, RecordId = batchId, Actor = user.Id, Action = action, At = DateTimeOffset.UtcNow });
+    }
+    private async Task Assigned(Guid scriptId, string actor, string role, Guid schoolId)
+    {
+        var assignment = await AsyncExecuter.FirstOrDefaultAsync((await InstitutionRecords.GetQueryableAsync()), r => r.SchoolId == schoolId && r.Kind == "assignment" && r.Code == scriptId.ToString() && r.Active);
+        if (assignment is not null && (JsonSerializer.Deserialize<Dictionary<string, string>>(assignment.DataJson, AppJson.Options) ?? []).GetValueOrDefault(role) != actor)
+            throw new PortalBusinessException(403, new { error = "This script is assigned to another reviewer." });
     }
     private static OperationResult Conflict() => Results.Conflict(new { error = "The script changed or is not ready for this action. Refresh and try again." });
     private async Task<AiBatch?> Batch(Guid id, ClaimsPrincipal p, IStaffIdentityService users, AcademicAccess access)

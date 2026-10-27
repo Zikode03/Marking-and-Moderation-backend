@@ -46,7 +46,7 @@ public partial class AiScript
         if (Status is not ("Uploaded" or "Failed")) throw new BusinessException(WorkflowErrors.Locked);
         Status = "Queued"; Error = null; Audit(actor, "Queued", "Requested local AI marking");
     }
-    public void ConfirmTeacherReview(string actor, Dictionary<string, decimal> marks, string reason, Dictionary<string, string>? feedback = null, string? summary = null)
+    public void ConfirmTeacherReview(string actor, Dictionary<string, decimal> marks, string reason, Dictionary<string, string>? feedback = null, string? summary = null, Dictionary<string, string>? evidence = null)
     {
         var result = Result();
         if (Status is not ("AwaitingModeration" or "NeedsAttention" or "ReturnedToTeacher") || result is null) throw new BusinessException(WorkflowErrors.Locked);
@@ -54,8 +54,9 @@ public partial class AiScript
             result.Questions.Any(q => !marks.TryGetValue(q.Number, out var m) || m < 0 || m > q.MaxMarks)) throw new BusinessException(WorkflowErrors.Marks);
         if (feedback is not null && (feedback.Count != result.Questions.Count || result.Questions.Any(q => !feedback.TryGetValue(q.Number, out var text) || text is null || text.Length > 5000))) throw new BusinessException(WorkflowErrors.Marks);
         if (summary is not null && (string.IsNullOrWhiteSpace(summary) || summary.Length > 10000)) throw new BusinessException(WorkflowErrors.Marks);
+        if (evidence is not null && (evidence.Count != result.Questions.Count || result.Questions.Any(q => !evidence.TryGetValue(q.Number,out var text) || text is null || text.Length > 30000))) throw new BusinessException(WorkflowErrors.Marks);
         Audit(actor, "TeacherReviewStarted", reason);
-        ResultJson = AppJson.Write(result with { NeedsAttention = false, Summary = summary?.Trim() ?? result.Summary, Questions = result.Questions.Select(q => q with { Marks = marks[q.Number], Feedback = feedback is null ? q.Feedback : feedback[q.Number].Trim(), NeedsReview = false }).ToList() });
+        ResultJson = AppJson.Write(result with { NeedsAttention = false, Summary = summary?.Trim() ?? result.Summary, Questions = result.Questions.Select(q => q with { Marks = marks[q.Number], Feedback = feedback is null ? q.Feedback : feedback[q.Number].Trim(), Evidence = evidence is null ? q.Evidence : evidence[q.Number].Trim(), NeedsReview = false }).ToList() });
         Status = "TeacherReviewed";
         Audit(actor, "TeacherReviewed", reason);
     }

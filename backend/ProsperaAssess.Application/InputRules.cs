@@ -13,7 +13,7 @@ public static class InputRules
         request.Criteria is { Count: > 0 and <= 100 } &&
         request.Criteria.All(c => c is not null && Text(c.Name, 200) && c.MaxMarks > 0 && c.MaxMarks <= 1_000_000) &&
         (request.School is null ||
-         (Text(request.School.Subject, 200) && request.School.Grade is >= 8 and <= 12 &&
+         (Text(request.School.Subject, 200) && (request.School.AcademicYear is null or >= 2000 and <= 2200) && request.School.Grade is >= 8 and <= 12 &&
           request.School.Term is >= 1 and <= 4 && request.School.WeightPercent is >= 0 and <= 100 &&
           request.School.Pathway is "IEB" or "DBE-NSC" or "Other" &&
           request.School.SchoolType is "Independent" or "Public" &&

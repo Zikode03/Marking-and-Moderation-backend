@@ -5,6 +5,8 @@ namespace ProsperaAssess;
 
 public abstract class ProsperaAppService : ApplicationService
 {
+    protected Volo.Abp.Domain.Repositories.IRepository<InstitutionRecord, Guid> InstitutionRecords => LazyServiceProvider.LazyGetRequiredService<Volo.Abp.Domain.Repositories.IRepository<InstitutionRecord, Guid>>();
+    protected Volo.Abp.Domain.Repositories.IRepository<InstitutionEvent, Guid> InstitutionEvents => LazyServiceProvider.LazyGetRequiredService<Volo.Abp.Domain.Repositories.IRepository<InstitutionEvent, Guid>>();
     protected ClaimsPrincipal Principal => LazyServiceProvider.LazyGetRequiredService<ICurrentPrincipalAccessor>().Principal!;
     protected IStaffIdentityService users => LazyServiceProvider.LazyGetRequiredService<IStaffIdentityService>();
     protected AcademicAccess access => LazyServiceProvider.LazyGetRequiredService<AcademicAccess>();

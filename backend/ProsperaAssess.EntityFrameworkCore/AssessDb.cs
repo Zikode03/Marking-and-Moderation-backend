@@ -21,12 +21,22 @@ public class AssessDb(DbContextOptions<AssessDb> options) : AbpDbContext<AssessD
     public DbSet<FacultyRow> Faculties => Set<FacultyRow>();
     public DbSet<ModuleRow> Modules => Set<ModuleRow>();
     public DbSet<StaffAllocationRow> StaffAllocations => Set<StaffAllocationRow>();
+    public DbSet<InstitutionRecord> InstitutionRecords => Set<InstitutionRecord>();
+    public DbSet<InstitutionEvent> InstitutionEvents => Set<InstitutionEvent>();
     protected override void OnModelCreating(ModelBuilder model)
     {
         base.OnModelCreating(model);
         new IdentitySchemaContext(new DbContextOptionsBuilder<IdentitySchemaContext>().UseSqlServer("Server=localhost;Database=IdentitySchema;Trusted_Connection=True;TrustServerCertificate=True").Options).ConfigureIdentity(model);
         model.ConfigurePermissionManagement();
         model.ConfigureAuditLogging();
+        model.Entity<InstitutionRecord>().Property(x => x.Kind).HasMaxLength(40);
+        model.Entity<InstitutionRecord>().Property(x => x.Code).HasMaxLength(100);
+        model.Entity<InstitutionRecord>().Property(x => x.Name).HasMaxLength(200);
+        model.Entity<InstitutionRecord>().Property(x => x.Revision).IsConcurrencyToken();
+        model.Entity<InstitutionRecord>().HasIndex(x => new { x.SchoolId, x.Kind, x.Code }).IsUnique();
+        model.Entity<InstitutionEvent>().Property(x => x.Actor).HasMaxLength(450);
+        model.Entity<InstitutionEvent>().Property(x => x.Action).HasMaxLength(100);
+        model.Entity<InstitutionEvent>().HasIndex(x => new { x.SchoolId, x.At });
         model.Entity<ProsperaAssess.AiTrainingExample>().HasOne<ProsperaAssess.AiScript>().WithMany().HasForeignKey(x => x.ScriptId).OnDelete(DeleteBehavior.Restrict);
         model.Entity<ProsperaAssess.AiTrainingExample>().Property(x => x.MaxMarks).HasPrecision(18, 2);
         model.Entity<ProsperaAssess.AiTrainingExample>().Property(x => x.Marks).HasPrecision(18, 2);

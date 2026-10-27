@@ -15,14 +15,27 @@ public class PortalUserStore : UserStore<AppUser, IdentityRole, AssessDb, string
 public class StaffIdentityService(IServiceScopeFactory scopes) : IStaffIdentityService
 {
     private async Task<T> With<T>(Func<UserManager<AppUser>, Task<T>> operation) { using var scope = scopes.CreateScope(); return await operation(scope.ServiceProvider.GetRequiredService<UserManager<AppUser>>()); }
-    private static StaffAccount? View(AppUser? u) => u is null ? null : new() { Id = u.Id, Email = u.Email, UserName = u.UserName, EmailConfirmed = u.EmailConfirmed, SchoolId = u.SchoolId };
+    private static StaffAccount? View(AppUser? u) => u is null ? null : new() { Id = u.Id, Email = u.Email, UserName = u.UserName, EmailConfirmed = u.EmailConfirmed, SchoolId = u.SchoolId, Active = u.LockoutEnd is null || u.LockoutEnd <= DateTimeOffset.UtcNow };
     private static AccountOperation Result(IdentityResult r) => new(r.Succeeded, r.Errors.Select(e => new AccountError(e.Description)).ToList());
-    public Task<StaffAccount?> GetUserAsync(ClaimsPrincipal p) => With(async u => View(await u.GetUserAsync(p)));
+    public Task<StaffAccount?> GetUserAsync(ClaimsPrincipal p) => With(async u => { var user = await u.GetUserAsync(p); if (user is null || await u.IsLockedOutAsync(user)) return null; var stamp = p.FindFirst(new ClaimsIdentityOptions().SecurityStampClaimType)?.Value; if (stamp is not null && stamp != user.SecurityStamp) return null; var roles = await u.GetRolesAsync(user); return roles.OrderBy(r => r).SequenceEqual(p.FindAll(ClaimTypes.Role).Select(c => c.Value).Distinct().OrderBy(r => r)) ? View(user) : null; });
     public Task<StaffAccount?> FindByEmailAsync(string email) => With(async u => View(await u.FindByEmailAsync(email)));
     public Task<StaffAccount?> FindByIdAsync(string id) => With(async u => View(await u.FindByIdAsync(id)));
     public Task<IList<string>> GetRolesAsync(StaffAccount user) => With(async u => await u.GetRolesAsync((await u.FindByIdAsync(user.Id))!));
     public Task<bool> IsInRoleAsync(StaffAccount user, string role) => With(async u => await u.IsInRoleAsync((await u.FindByIdAsync(user.Id))!, role));
     public Task<List<StaffAccount>> GetUsersAsync(Guid schoolId) => With(async u => (await u.Users.Where(x => x.SchoolId == schoolId).OrderBy(x => x.Email).ToListAsync()).Select(x => View(x)!).ToList());
     public Task<AccountOperation> CreateAsync(StaffAccount user, string password) => With(async u => Result(await u.CreateAsync(new AppUser { Id = user.Id, Email = user.Email, UserName = user.UserName, EmailConfirmed = user.EmailConfirmed, SchoolId = user.SchoolId }, password)));
+    public Task<AccountOperation> SetStatusAsync(StaffAccount user, bool active, string[] roles) => With(async u =>
+    {
+        var member = (await u.FindByIdAsync(user.Id))!;
+        var previous = await u.GetRolesAsync(member);
+        var removed = await u.RemoveFromRolesAsync(member, previous.Except(roles));
+        if (!removed.Succeeded) return Result(removed);
+        var added = await u.AddToRolesAsync(member, roles.Except(previous));
+        if (!added.Succeeded) return Result(added);
+        await u.SetLockoutEnabledAsync(member, true);
+        var locked = await u.SetLockoutEndDateAsync(member, active ? null : DateTimeOffset.MaxValue);
+        await u.UpdateSecurityStampAsync(member);
+        return Result(locked);
+    });
     public Task<AccountOperation> AddToRoleAsync(StaffAccount user, string role) => With(async u => Result(await u.AddToRoleAsync((await u.FindByIdAsync(user.Id))!, role)));
 }

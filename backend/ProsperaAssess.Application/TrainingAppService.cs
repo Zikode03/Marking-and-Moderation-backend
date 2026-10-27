@@ -26,7 +26,13 @@ public class TrainingAppService : ProsperaAppService, ITrainingAppService
         if (await Allowed(id, p, users, access) is not { } user || !await AsyncExecuter.AnyAsync((await AiScriptsRepository.GetQueryableAsync()), s => s.Id == scriptId && s.BatchId == id)) return Results.NotFound();
         if (!InputRules.Text(label.QuestionNumber, 100) || !InputRules.Text(label.Question, 20000) || !InputRules.Text(label.Answer, 30000) || !InputRules.Text(label.Rubric, 20000) || label.MaxMarks <= 0 || label.MaxMarks > 1000 || label.Marks < 0 || label.Marks > label.MaxMarks)
             return Results.BadRequest(new { error = "Provide a question number, question, transcribed answer, approved marking guide, maximum and verified expert mark within range." });
+        if (label.SourceMarked && (!label.LearnerWritingOnly || !InputRules.Text(label.PreparationNotes, 5000) || !InputRules.Text(label.DatasetScope, 300)))
+            return Results.BadRequest(new { error = "For marked scripts confirm learner-only transcription, document annotation handling and declare the academic dataset scope." });
         var example = new AiTrainingExample(GuidGenerator.Create()) { ScriptId = scriptId, QuestionNumber = label.QuestionNumber!.Trim(), Question = label.Question!.Trim(), Answer = label.Answer!.Trim(), Rubric = label.Rubric!.Trim(), MaxMarks = label.MaxMarks, Marks = label.Marks, LabelledBy = user.Id, CreatedAt = DateTimeOffset.UtcNow };
+        var sourceScript = await AsyncExecuter.FirstAsync((await AiScriptsRepository.GetQueryableAsync()), s => s.Id == scriptId && s.BatchId == id);
+        var learnerReference = string.IsNullOrWhiteSpace(label.LearnerGroup) ? sourceScript.Candidate.Trim().ToUpperInvariant() : label.LearnerGroup.Trim();
+        if (label.SourceMarked)
+            await InstitutionRecords.InsertAsync(new InstitutionRecord(GuidGenerator.Create()) { SchoolId = user.SchoolId, Kind = "trainingPreparation", Code = example.Id.ToString(), Name = label.QuestionNumber!, Revision = 1, DataJson = AppJson.Write(new { sourceMarked = true, learnerWritingOnly = true, preparationNotes = label.PreparationNotes!.Trim(), datasetScope = label.DatasetScope!.Trim(), learnerGroup = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(user.SchoolId.ToString() + learnerReference))) }) });
         await AiTrainingExamplesRepository.InsertAsync(example); await UnitOfWorkManager.Current!.SaveChangesAsync(); return Results.Created($"/api/ai/batches/{id}/training", example);
 
     }
@@ -59,7 +65,8 @@ public class TrainingAppService : ProsperaAppService, ITrainingAppService
         var hashes = hashRows.ToDictionary(s => s.Id, s => s.Hash);
         var assessmentGroup = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(Convert.ToHexString(SHA256.HashData(batch.Paper)) + Convert.ToHexString(SHA256.HashData(batch.Memo)))));
 
-        var lines = examples.Select(e => AppJson.Write(new { schemaVersion = 1, batch.ScriptLanguage, batch.MemoLanguage, assessmentGroup, scriptGroup = hashes[e.ScriptId], school = parent.SchoolContext(), institution = parent.InstitutionContext(), e.QuestionNumber, e.Question, e.Answer, e.Rubric, e.MaxMarks, e.Marks }));
+        var preparations = await AsyncExecuter.ToListAsync((await InstitutionRecords.GetQueryableAsync()).Where(r => r.SchoolId == parent.SchoolId && r.Kind == "trainingPreparation"));
+        var lines = examples.Select(e => { var preparation = preparations.FirstOrDefault(r => r.Code == e.Id.ToString()); return AppJson.Write(new { schemaVersion = 2, batch.ScriptLanguage, batch.MemoLanguage, assessmentGroup, scriptGroup = hashes[e.ScriptId], school = parent.SchoolContext(), institution = parent.InstitutionContext(), preparation = preparation is null ? (JsonElement?)null : JsonSerializer.Deserialize<JsonElement>(preparation.DataJson), e.QuestionNumber, e.Question, e.Answer, e.Rubric, e.MaxMarks, e.Marks }); });
         return Results.File(Encoding.UTF8.GetBytes(string.Join('\n', lines)), "application/x-ndjson", "verified-training-examples.jsonl");
 
     }

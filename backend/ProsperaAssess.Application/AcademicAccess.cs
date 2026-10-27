@@ -6,7 +6,7 @@ namespace ProsperaAssess;
 [Volo.Abp.RemoteService(false)]
 public class AcademicAccess : ProsperaAppService
 {
-    public static bool Leader(ClaimsPrincipal p) => new[] { "SchoolAdmin", "AcademicAdmin", "HOD", "Principal" }.Any(p.IsInRole);
+    public static bool Leader(ClaimsPrincipal p) => new[] { "SchoolAdmin", "AcademicAdmin", "HOD", "Moderator", "Principal" }.Any(p.IsInRole);
     public static bool Manager(ClaimsPrincipal p) => p.IsInRole("SchoolAdmin") || p.IsInRole("AcademicAdmin");
 
     public async Task<bool> CanAccess(StaffAccount user, ClaimsPrincipal principal, AssessmentRow assessment)

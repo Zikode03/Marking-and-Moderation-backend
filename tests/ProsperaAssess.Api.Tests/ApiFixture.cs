@@ -42,7 +42,7 @@ public sealed class ApiFixture : IAsyncLifetime
         db.Faculties.AddRange(new FacultyRow(BusinessFaculty) { SchoolId = School, Code = "BUS", Name = "Business" }, new FacultyRow(TechnologyFaculty) { SchoolId = School, Code = "TECH", Name = "Technology" });
         db.Modules.AddRange(new ModuleRow(BusinessModule) { SchoolId = School, FacultyId = BusinessFaculty, Code = "BMAN101", Name = "Business Management" }, new ModuleRow(TechnologyModule) { SchoolId = School, FacultyId = TechnologyFaculty, Code = "ICT101", Name = "Computing" });
         await db.SaveChangesAsync();
-        foreach (var role in new[] { "SchoolAdmin", "Teacher", "Lecturer", "Professor", "HOD", "Principal", "AcademicAdmin", "OtherSchool", "NoRole", "TwoFactor" })
+        foreach (var role in new[] { "SchoolAdmin", "Teacher", "Lecturer", "Professor", "HOD", "Moderator", "Principal", "AcademicAdmin", "OtherSchool", "NoRole", "TwoFactor" })
         {
             var email = role.ToLowerInvariant() + "@tests.example";
             var user = new AppUser

@@ -10,6 +10,6 @@ public class ProsperaAssessHttpApiHostModule : AbpModule
 {
     public override void ConfigureServices(ServiceConfigurationContext context)
     {
-        Configure<AbpAuditingOptions>(o => { o.ApplicationName = "ProsperaAssess"; o.IgnoredTypes.Add(typeof(LoginRequest)); o.IgnoredTypes.Add(typeof(RefreshRequest)); o.IgnoredTypes.Add(typeof(UploadBatchDto)); o.IgnoredTypes.Add(typeof(CreateStaffRequest)); o.IgnoredTypes.Add(typeof(TrainingLabel)); });
+        Configure<AbpAuditingOptions>(o => { o.ApplicationName = "ProsperaAssess"; o.IgnoredTypes.Add(typeof(AcceptInvitationInput)); o.IgnoredTypes.Add(typeof(LoginRequest)); o.IgnoredTypes.Add(typeof(RefreshRequest)); o.IgnoredTypes.Add(typeof(UploadBatchDto)); o.IgnoredTypes.Add(typeof(CreateStaffRequest)); o.IgnoredTypes.Add(typeof(TrainingLabel)); });
     }
 }

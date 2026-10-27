@@ -12,7 +12,10 @@ public class StaffAppService : ProsperaAppService, IStaffAppService
         var principal = Principal;
 
         var user = await users.GetUserAsync(principal);
-        return user is null ? Results.Unauthorized() : Results.Ok(new { user.Email, user.SchoolId, roles = await users.GetRolesAsync(user) });
+        if (user is null) return Results.Unauthorized();
+        var institution = await AsyncExecuter.FirstOrDefaultAsync((await InstitutionRecords.GetQueryableAsync()), r => r.SchoolId == user.SchoolId && r.Kind == "institution" && r.Active);
+        var fields = institution is null ? new Dictionary<string,string>() : JsonSerializer.Deserialize<Dictionary<string,string>>(institution.DataJson, AppJson.Options) ?? [];
+        return Results.Ok(new { user.Email, user.SchoolId, roles = await users.GetRolesAsync(user), organisationType = institution is null ? null : fields.GetValueOrDefault("type") == "school" ? "school" : "institution", sector = fields.GetValueOrDefault("sector") });
 
     }
     [Microsoft.AspNetCore.Authorization.Authorize(ProsperaPermissions.CreateStaff)]
@@ -23,7 +26,7 @@ public class StaffAppService : ProsperaAppService, IStaffAppService
 
         var admin = await users.GetUserAsync(principal);
         if (admin is null || admin.SchoolId == Guid.Empty) return Results.Unauthorized();
-        if (!InputRules.Email(request.Email) || !InputRules.Text(request.Password, 1024) || request.Role is not ("Teacher" or "Lecturer" or "Professor" or "HOD" or "Principal" or "AcademicAdmin"))
+        if (!InputRules.Email(request.Email) || !InputRules.Text(request.Password, 1024) || request.Role is not ("Teacher" or "Lecturer" or "Professor" or "HOD" or "Moderator" or "Principal" or "AcademicAdmin"))
             return Results.BadRequest(new { error = "A valid email, password and school role are required." });
         var email = request.Email!.Trim();
         if (await users.FindByEmailAsync(email) is not null) return Results.Conflict(new { error = "Account already exists." });

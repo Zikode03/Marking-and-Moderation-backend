@@ -11,7 +11,7 @@ public class AccountSeedContributor(RoleManager<IdentityRole> roles, UserManager
     public virtual async Task SeedAsync(DataSeedContext context)
     {
 
-        foreach (var role in new[] { "SchoolAdmin", "Teacher", "Lecturer", "Professor", "HOD", "Principal", "AcademicAdmin" })
+        foreach (var role in new[] { "SchoolAdmin", "Teacher", "Lecturer", "Professor", "HOD", "Moderator", "Principal", "AcademicAdmin" })
             if (!await roles.RoleExistsAsync(role))
                 Check(await roles.CreateAsync(new IdentityRole(role)));
 

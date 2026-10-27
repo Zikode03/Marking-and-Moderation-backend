@@ -12,11 +12,12 @@ public class AiTests(ApiFixture fixture) : IClassFixture<ApiFixture>
 {
     private static MultipartFormDataContent Files(int grade = 10, bool duplicate = false, string scriptLanguage = "auto", string memoLanguage = "auto")
     {
+        var nonce = Guid.NewGuid().ToString("N");
         var form = new MultipartFormDataContent();
         form.Add(new StringContent(AppJson.Write(new { title = "Fictional AI workflow test", scriptLanguage, memoLanguage, school = new { grade, subject = "Mathematics", term = 1, assessmentType = "Test", schoolType = "Public", pathway = "DBE-NSC" } })), "context");
         foreach (var (name, text, filename) in new[] { ("paper", "Question", "paper.pdf"), ("memo", "Guide", "memo.pdf"), ("scripts", "Fictional answer", "C001.pdf") })
-            form.Add(new ByteArrayContent(Encoding.UTF8.GetBytes("%PDF-1.4 " + text)), name, filename);
-        if (duplicate) form.Add(new ByteArrayContent(Encoding.UTF8.GetBytes("%PDF-1.4 Fictional answer")), "scripts", "C002.pdf");
+            form.Add(new ByteArrayContent(Encoding.UTF8.GetBytes("%PDF-1.4 " + text + nonce)), name, filename);
+        if (duplicate) form.Add(new ByteArrayContent(Encoding.UTF8.GetBytes("%PDF-1.4 Fictional answer" + nonce)), "scripts", "C002.pdf");
         return form;
     }
     private async Task<Guid> Upload(HttpClient client)
@@ -61,6 +62,13 @@ public class AiTests(ApiFixture fixture) : IClassFixture<ApiFixture>
         Assert.Equal(HttpStatusCode.Forbidden, (await teacher.PostAsync($"/api/ai/batches/{batch}/training/{example}/verify", null)).StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await hod.PostAsync($"/api/ai/batches/{batch}/training/{example}/verify", null)).StatusCode);
         var export = await admin.GetStringAsync($"/api/ai/batches/{batch}/training/export"); Assert.Contains("assessmentGroup", export); Assert.DoesNotContain("C001", export); Assert.DoesNotContain("labelledBy", export);
+        var invalidMarked = new { questionNumber = "2", question = "Explain the method", answer = "Learner writing", rubric = "Credit method", maxMarks = 5, marks = 3, sourceMarked = true, learnerWritingOnly = false, preparationNotes = "Teacher marks excluded", datasetScope = "CAPS/Grade10/Mathematics/en" };
+        Assert.Equal(HttpStatusCode.BadRequest, (await teacher.PostAsJsonAsync($"/api/ai/batches/{batch}/scripts/{script}/training", invalidMarked)).StatusCode);
+        var marked = await teacher.PostAsJsonAsync($"/api/ai/batches/{batch}/scripts/{script}/training", new { questionNumber = "2", question = "Explain the method", answer = "Learner writing", rubric = "Credit method", maxMarks = 5, marks = 3, sourceMarked = true, learnerWritingOnly = true, preparationNotes = "Teacher marks excluded", datasetScope = "CAPS/Grade10/Mathematics/en" });
+        Assert.Equal(HttpStatusCode.Created, marked.StatusCode);
+        var markedId = (await marked.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid();
+        Assert.Equal(HttpStatusCode.OK, (await hod.PostAsync($"/api/ai/batches/{batch}/training/{markedId}/verify", null)).StatusCode);
+        var markedExport = await admin.GetStringAsync($"/api/ai/batches/{batch}/training/export"); Assert.Contains("learnerGroup", markedExport); Assert.Contains("Teacher marks excluded", markedExport); Assert.DoesNotContain("C001", markedExport);
         using var other = fixture.Client("OtherSchool"); Assert.Equal(HttpStatusCode.NotFound, (await other.GetAsync($"/api/ai/batches/{batch}/training")).StatusCode);
     }
     [Fact]

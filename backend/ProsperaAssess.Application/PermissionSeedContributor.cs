@@ -10,6 +10,12 @@ public class PermissionSeedContributor(IPermissionDataSeeder seeder, Volo.Abp.Do
     public virtual async Task SeedAsync(DataSeedContext context)
     {
         var checkpointId = Guid.Parse("f0658730-5f5e-4d43-9068-89c0381e95f1");
+        var moderatorCheckpoint = Guid.Parse("11a44d74-e719-4c44-84f3-0d24440fed48");
+        if (await checkpoints.FindAsync(moderatorCheckpoint) is null)
+        {
+            await seeder.SeedAsync("R", "Moderator", [ProsperaPermissions.Workspace, ProsperaPermissions.Moderate], context.TenantId);
+            await checkpoints.InsertAsync(new PermissionSeedState(moderatorCheckpoint, "ModeratorRole.v1"), autoSave: true);
+        }
         if (await checkpoints.FindAsync(checkpointId) is not null) return;
         var staff = new[] { "SchoolAdmin", "Teacher", "Lecturer", "Professor", "HOD", "Principal", "AcademicAdmin" };
         foreach (var role in staff)
